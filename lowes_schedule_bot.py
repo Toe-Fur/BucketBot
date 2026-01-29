@@ -81,9 +81,9 @@ def load_config():
     run_mode = config.get("RUN_MODE", "once")
     run_value = config.get("RUN_VALUE", "")
 
-    # If running interactively, ALWAYS prompt for schedule mode (User request)
-    # If running in background (docker-compose up -d), use saved config.
-    if sys.stdin.isatty():
+    # If running interactively AND not configured via Env, prompt for schedule mode.
+    # checking os.getenv("RUN_MODE") ensures that Dockge/Compose setups with Env vars skip this prompt.
+    if sys.stdin.isatty() and not os.getenv("RUN_MODE"):
         print(f"\n🕒 Scheduling Setup (Current: {run_mode} {run_value})")
         print("1. Run Once (and exit)")
         print("2. Run Daily (e.g. at 08:00)")
