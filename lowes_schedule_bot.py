@@ -760,15 +760,7 @@ def get_calendar_service():
             else:
                 print("❌ Skipping Google Sync (missing credentials).")
                 return None
-        csec = input("Enter Client Secret: ").strip()
-        if cid and csec:
-            data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
-            with open(CREDENTIALS_PATH, "w") as f:
-                json.dump(data, f)
-            print("✅ credentials.json created.")
-        else:
-            print("❌ Skipping Google Sync (missing credentials).")
-            return None
+
 
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
