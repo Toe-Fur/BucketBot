@@ -24,20 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v2.5 (FINAL_BOSS_DEBUG)"
-print(f"🤖 Lowe's Bot - {VERSION}", flush=True)
-print(f"🔍 [BOOT] Environment Keys: {list(os.environ.keys())}", flush=True)
-if "GOOGLE_CLIENT_ID" in os.environ:
-    print(f"🔍 [BOOT] GOOGLE_CLIENT_ID is DETECTED (length: {len(os.environ['GOOGLE_CLIENT_ID'])})", flush=True)
-else:
-    print(f"🔍 [BOOT] GOOGLE_CLIENT_ID is MISSING from environment.", flush=True)
-
-if "GOOGLE_TOKEN_JSON" in os.environ:
-    print(f"🔍 [BOOT] GOOGLE_TOKEN_JSON is DETECTED (length: {len(os.environ['GOOGLE_TOKEN_JSON'])})", flush=True)
-else:
-    print(f"🔍 [BOOT] GOOGLE_TOKEN_JSON is MISSING from environment.", flush=True)
-
-
+VERSION = "v3.0.0"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -746,8 +733,7 @@ def get_calendar_service():
     CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
 
     if not os.path.exists(CREDENTIALS_PATH):
-        # Extremely robust environment check
-        print("🔍 Searching for Google Credentials in Environment...", flush=True)
+        # Extremely robust environment check for headless deployment
         env_keys = {k.upper(): v for k, v in os.environ.items()}
         
         cid_key = "GOOGLE_CLIENT_ID"

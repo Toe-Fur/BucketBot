@@ -11,68 +11,54 @@ A Dockerized Python bot that scrapes your Lowe's schedule (Kronos) and syncs it 
 
 ## Deployment (Docker / Dockge)
 
-### Option 1: Headless / Dockge (Recommended)
-You can configure everything via environment variables in your `compose.yaml` without needing to interact with a terminal.
+### 🚀 Recommended Setup (Headless Server)
+The most reliable way to set up the bot on a remote server (like Dockge/Portainer) is to upload your credentials via SFTP.
+
+1.  **Prepare Files on your PC**: Run the bot once locally to generate `data/credentials.json` and `data/token.json`.
+2.  **Upload via SFTP**: 
+    - Create the folder `/opt/stacks/bucket-bot/data/` on your server.
+    - Upload your `token.json` and `credentials.json` into that `data` folder.
+3.  **Fix Permissions**: Run this on your server terminal so Docker can read the files:
+    ```bash
+    sudo chown -R $USER: /opt/stacks/bucket-bot
+    sudo chmod -R 775 /opt/stacks/bucket-bot
+    ```
+4.  **Dockge / Compose Config**:
+    ```yaml
+    services:
+      bucket-bot:
+        build: https://github.com/Toe-Fur/BucketBot.git#main
+        container_name: bucket-bot
+        restart: unless-stopped
+        volumes:
+          - ./data:/app/data
+        environment:
+          - LOWES_USERNAME=5001234
+          - LOWES_PASSWORD=YourPassword!
+          - LOWES_PIN=1234
+          - RUN_MODE=daily
+          - RUN_VALUE=08:00
+          # - LOWES_DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+    ```
+
+### 🛠️ Alternative: Environment Variables
+If you don't want to use SFTP, you can inject everything via `compose.yaml`. **Note**: This can be tricky with JSON quoting.
 
 ```yaml
-services:
-  bucket-bot:
-    build: https://github.com/Toe-Fur/BucketBot.git#main
-    container_name: bucket-bot
-    restart: unless-stopped
-    volumes:
-      - ./data:/app/data
-    stdin_open: true
-    tty: true
-    environment:
-      # Lowe's Login
-      - LOWES_USERNAME=99999
-      - LOWES_PASSWORD=YourPassword!
-      - LOWES_PIN=1234
-      
-      # Discord (Optional)
-      - LOWES_DISCORD_WEBHOOK=
-      
-      # Schedule Settings
-      - RUN_MODE=daily     # Options: daily, interval, once
-      - RUN_VALUE=08:00    # Time (24h) or Interval (hours)
-      
-      # Google Credentials (Optional, if you don't have json file yet)
-      - GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-      - GOOGLE_CLIENT_SECRET=your-client-secret
-      
-      # Google Token (REQUIRED for headless server - copy from your PC's token.json)
-      - GOOGLE_TOKEN_JSON='{"token": "...", "refresh_token": "...", ...}'
+      - GOOGLE_CLIENT_ID="your-id.apps.googleusercontent.com"
+      - GOOGLE_CLIENT_SECRET="your-secret"
+      - GOOGLE_TOKEN_JSON='{"token": "ya29...", "refresh_token": "...", ...}'
 ```
 
-### Option 2: Interactive Setup
-1.  Clone the repo:
-    ```bash
-    git clone https://github.com/your-username/lowes-bot.git
-    cd lowes-bot
-    ```
+## CLI Commands
 
-2.  Run setup:
-    ```bash
-    docker-compose run --rm lowes-bot
-    ```
-    - Follow the prompts to enter your Lowe's credentials.
-    - If you don't have Google Credentials, it will guide you to create them.
+### Force an Immediate Run
+In your server terminal:
+```bash
+docker exec bucket-bot python lowes_schedule_bot.py --once
+```
 
-3.  Run in Background:
-    ```bash
-    docker-compose up -d
-    ```
-
-## CLI Options
-
-- **Reset**: To clear all saved data and start fresh:
-  ```bash
-  docker-compose run --rm lowes-bot --reset
-  ```
-
-## Google API Setup
-You need a `credentials.json` file from Google Cloud Console.
-1.  Enable "Google Calendar API".
-2.  Create "OAuth Client ID" (Desktop App).
-3.  Use the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` env vars OR let the bot prompt you.
+### Reset All Data
+```bash
+docker compose run --rm bucket-bot --reset
+```
