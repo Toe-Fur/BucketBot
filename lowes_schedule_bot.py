@@ -32,6 +32,11 @@ if "GOOGLE_CLIENT_ID" in os.environ:
 else:
     print(f"🔍 [BOOT] GOOGLE_CLIENT_ID is MISSING from environment.", flush=True)
 
+if "GOOGLE_TOKEN_JSON" in os.environ:
+    print(f"🔍 [BOOT] GOOGLE_TOKEN_JSON is DETECTED (length: {len(os.environ['GOOGLE_TOKEN_JSON'])})", flush=True)
+else:
+    print(f"🔍 [BOOT] GOOGLE_TOKEN_JSON is MISSING from environment.", flush=True)
+
 
 # --------------------------
 # Config / Env
@@ -788,6 +793,20 @@ def get_calendar_service():
                 return None
 
 
+
+    if not os.path.exists(TOKEN_PATH):
+        # Support injecting the authorized token via environment variable for headless setups
+        env_token = (os.getenv("GOOGLE_TOKEN_JSON") or "").strip().strip('"').strip("'")
+        if env_token:
+            print("🤖 Found Google Token in Environment. Generating token.json...", flush=True)
+            try:
+                # Validate JSON before writing
+                token_data = json.loads(env_token)
+                with open(TOKEN_PATH, "w") as f:
+                    json.dump(token_data, f)
+                print("✅ token.json successfully created from environment.", flush=True)
+            except Exception as e:
+                print(f"❌ Failed to parse/write GOOGLE_TOKEN_JSON: {e}", flush=True)
 
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
