@@ -24,6 +24,8 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
+print("🤖 Lowe's Bot - v2.1 (Headless Fix)")
+
 # --------------------------
 # Config / Env
 # --------------------------
