@@ -1,14 +1,10 @@
-version: '3.8'
-
 services:
-  lowes-bot:
-    build: .
-    image: lowes-scheduler-bot
-    container_name: lowes-scheduler-bot
+  bucket-bot:
+    # Use remote build context so you don't need to clone the files manually on the server
+    build: https://github.com/Toe-Fur/BucketBot.git#main
+    container_name: bucket-bot
+    restart: unless-stopped
     volumes:
       - ./data:/app/data
-    stdin_open: true # docker run -i
-    tty: true        # docker run -t
-    # Restart policy: beware, if config is missing, it will restart endlessly.
-    # Best to run once interactively first.
-    restart: on-failure
+    stdin_open: true
+    tty: true
