@@ -1,0 +1,1057 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Lowes schedule scraper — cleaned single-file version.
+Run: python lowes_schedule_bot.py [--debug]
+"""
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+from ics import Calendar, Event
+
+from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
+
+# --------------------------
+# Config / Env
+# --------------------------
+# --------------------------
+# Config / Env
+# --------------------------
+TZ = "America/Los_Angeles"
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# DISCORD_WEBHOOK_URL will be loaded from config or env
+
+# --------------------------
+# CLI Utils
+# --------------------------
+def parse_args():
+    parser = argparse.ArgumentParser(description="Lowe's Schedule Bot")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode (dumps HTML/PNG)")
+    parser.add_argument("--reset", action="store_true", help="Reset configuration and tokens")
+    return parser.parse_args()
+
+ARGS = parse_args()
+DEBUG = ARGS.debug
+
+CONFIG_DIR = "data"
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+def load_config():
+    # Ensure data dir exists
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR)
+    
+    config = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+            print(f"✅ Loaded configuration from {CONFIG_FILE}")
+        except Exception as e:
+            print(f"⚠️ Error loading config: {e}")
+
+    # Helper to get value from config, env, or prompt
+    def get_val(key, prompt_text, default=None, hidden=False):
+        val = config.get(key) or os.getenv(key) or default
+        if not val:
+            print(f"📝 Setup Required: {prompt_text}")
+            val = input(f"{prompt_text}: ").strip()
+            config[key] = val
+        return val
+
+    username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID")
+    password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
+    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN (e.g. 1234)")
+    webhook  = config.get("LOWES_DISCORD_WEBHOOK") or os.getenv("LOWES_DISCORD_WEBHOOK", "")
+    
+    # Schedule Config
+    run_mode = config.get("RUN_MODE", "once")
+    run_value = config.get("RUN_VALUE", "")
+
+    # If running interactively, ALWAYS prompt for schedule mode (User request)
+    # If running in background (docker-compose up -d), use saved config.
+    if sys.stdin.isatty():
+        print(f"\n🕒 Scheduling Setup (Current: {run_mode} {run_value})")
+        print("1. Run Once (and exit)")
+        print("2. Run Daily (e.g. at 08:00)")
+        print("3. Run Interval (e.g. every 4 hours)")
+        
+        # Default to current
+        def_choice = "1"
+        if run_mode == "daily": def_choice = "2"
+        elif run_mode == "interval": def_choice = "3"
+
+        choice = input(f"Select Mode [{def_choice}]: ").strip() or def_choice
+        
+        if choice == "2":
+            run_mode = "daily"
+            curr_val = run_value if run_mode == "daily" else "08:00"
+            run_value = input(f"Enter time (HH:MM 24h) [{curr_val}]: ").strip() or curr_val
+        elif choice == "3":
+            run_mode = "interval"
+            curr_val = run_value if run_mode == "interval" else "4"
+            run_value = input(f"Enter hours interval [{curr_val}]: ").strip() or curr_val
+        else:
+            run_mode = "once"
+            run_value = ""
+        
+        config["RUN_MODE"] = run_mode
+        config["RUN_VALUE"] = run_value
+    else:
+        print(f"🤖 Non-interactive mode detected. Using saved schedule: {run_mode} {run_value}")
+
+    # Save back to config (always, to ensure new selection persists or defaults are saved)
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump({
+                "LOWES_USERNAME": username,
+                "LOWES_PASSWORD": password,
+                "LOWES_PIN": pin,
+                "LOWES_DISCORD_WEBHOOK": webhook,
+                "RUN_MODE": run_mode,
+                "RUN_VALUE": run_value
+            }, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Failed to save config: {e}")
+
+    return username, password, pin, webhook, run_mode, run_value
+
+if ARGS.reset:
+    print("🔄 Resetting configuration...")
+    for f in ["config.json", "token.json", "credentials.json"]:
+        path = os.path.join(CONFIG_DIR, f)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+                print(f"   Deleted {f}")
+            except Exception as e:
+                print(f"   Failed to delete {f}: {e}")
+    print("✅ Reset complete. Please re-run to setup.")
+    sys.exit(0)
+
+USERNAME, PASSWORD, PIN, DISCORD_WEBHOOK_URL, RUN_MODE, RUN_VALUE = load_config()
+
+# Tesseract path: inside Docker it will be just 'tesseract' usually, or configure via env
+TESSERACT_PATH = os.getenv("TESSERACT_PATH", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+# If running in linux/docker, tesseract might just be on path
+if os.name != 'nt':
+    TESSERACT_PATH = "tesseract"
+
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+
+def dprint(*args):
+    if DEBUG:
+        print(*args)
+
+# --------------------------
+# Selenium setup
+# --------------------------
+T = SimpleNamespace(short=1.0, med=4.0)
+chrome_options = Options()
+chrome_options.add_argument("--headless=new")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920,1080")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+driver = webdriver.Chrome(options=chrome_options)
+
+def wait_for_any(driver, locators, timeout):
+    end = time.time() + timeout
+    last_err = None
+    while time.time() < end:
+        for by, sel in locators:
+            try:
+                el = WebDriverWait(driver, 0.6).until(EC.presence_of_element_located((by, sel)))
+                return el
+            except Exception as e:
+                last_err = e
+        time.sleep(0.1)
+    if last_err:
+        raise last_err
+
+def debug_dump(tag):
+    if not DEBUG:
+        return
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    try:
+        try: driver.switch_to.default_content()
+        except: pass
+        html = driver.page_source
+        with open(os.path.join(CONFIG_DIR, f"debug_{tag}_{ts}.html"), "w", encoding="utf-8") as f:
+            f.write(html)
+        driver.save_screenshot(os.path.join(CONFIG_DIR, f"debug_{tag}_{ts}.png"))
+        dprint(f"🧪 Debug dump: saved to {CONFIG_DIR}")
+    except Exception as e:
+        print(f"⚠️ debug_dump failed: {e}")
+
+# --------------------------
+# Click / window helpers
+# --------------------------
+def js_click(el):
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+    except Exception:
+        pass
+    try:
+        driver.execute_script("arguments[0].click();", el)
+    except Exception:
+        try:
+            el.click()
+        except Exception:
+            raise
+
+def switch_to_new_window(old_handles, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end:
+        now = driver.window_handles
+        if len(now) > len(old_handles):
+            new = [h for h in now if h not in old_handles][-1]
+            driver.switch_to.window(new)
+            return True
+        time.sleep(0.2)
+    return False
+
+# --------------------------
+# Save view + Diagnostics
+# --------------------------
+def save_view(tag_prefix="my_schedule"):
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    html = driver.page_source
+    html_path = os.path.join(CONFIG_DIR, f"{tag_prefix}_raw_{ts}.html")
+    png_path  = os.path.join(CONFIG_DIR, f"{tag_prefix}_{ts}.png")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    driver.save_screenshot(png_path)
+    print(f"💾 Saved: {html_path}")
+    print(f"🖼️ Saved: {png_path}")
+    return html
+
+def diagnostic_calendar_snapshot(tag="diag"):
+    checks = [
+        (".fc-event"),
+        (".fc-time"),
+        (".fc-daygrid-day"),
+        ("table"),
+        (".employee-view, #mySchedule, .my-schedule, [data-view='my-schedule']"),
+    ]
+    found = {}
+    for sel in checks:
+        try:
+            els = driver.find_elements(By.CSS_SELECTOR, sel)
+            found[sel] = len(els)
+        except Exception:
+            found[sel] = 0
+
+    print("🔍 Calendar diagnostics:")
+    for sel, cnt in found.items():
+        print(f"  {sel}: {cnt}")
+
+    # sample text from first matched selector (if any)
+    for sel, cnt in found.items():
+        if cnt:
+            try:
+                el = driver.find_elements(By.CSS_SELECTOR, sel)[0]
+                sample = (el.get_attribute("outerText") or "")[:240].replace("\n", " ")
+                print(f"  sample ({sel}): {sample}")
+            except Exception as e:
+                print(f"  sample ({sel}): <error: {e}>")
+
+    # Save focused snippet if possible
+    try:
+        cal = None
+        for candidate in (".fc-daygrid", ".fc-timegrid", ".employee-view", "#mySchedule", "table"):
+            try:
+                cal = driver.find_element(By.CSS_SELECTOR, candidate)
+                break
+            except Exception:
+                cal = None
+        if cal:
+            snippet = cal.get_attribute("outerHTML")
+            fname = os.path.join(CONFIG_DIR, f"snippet_{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            with open(fname, "w", encoding="utf-8") as f:
+                f.write(snippet)
+            print(f"💾 Saved {fname} ({len(snippet)} bytes)")
+        else:
+            print("⚠️ No calendar container candidate found for snippet.")
+    except Exception as e:
+        print("⚠️ diagnostic snippet save failed:", e)
+
+# --------------------------
+# Login → MyLowesLife → UKG (keeps your original flow)
+# --------------------------
+driver.get("https://www.myloweslife.com")
+WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
+driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
+driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
+driver.find_element(By.ID, "loginButton_0").click()
+
+WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
+WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
+driver.find_element(By.ID, "idToken1").send_keys(PIN)
+driver.find_element(By.ID, "loginButton_0").click()
+
+# Utility to open the UKG tile if needed (kept for fallback)
+def open_ukg_tile():
+    def try_here():
+        x1 = "//span[@class='toolname' and normalize-space()='UKG']"
+        x2 = "//span[contains(@class,'toolname') and contains(normalize-space(),'UKG')]"
+        x3 = "//img[contains(@src,'UKG-Avatar-social')]/ancestor::*[self::a or self::button or @role='button'][1]"
+        for xp in (x1, x2):
+            try:
+                span = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, xp)))
+                try:
+                    clickable = span.find_element(By.XPATH, "ancestor::*[self::a or self::button or @role='button'][1]")
+                except:
+                    clickable = span
+                old = driver.window_handles[:]
+                js_click(clickable)
+                switch_to_new_window(old, timeout=8)
+                return True
+            except Exception:
+                pass
+        try:
+            card = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, x3)))
+            old = driver.window_handles[:]
+            js_click(card)
+            switch_to_new_window(old, timeout=8)
+            return True
+        except Exception:
+            return False
+
+    if try_here():
+        return True
+
+    try:
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+    except Exception:
+        frames = []
+    for fr in frames:
+        try:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(fr)
+            if try_here():
+                driver.switch_to.default_content()
+                return True
+        except Exception:
+            continue
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    return False
+
+# small sleep then direct navigate to the Kronos URL (skip clicking tiles)
+time.sleep(1)
+try:
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+except Exception:
+    pass
+
+# --------------------------
+# Helpers
+# --------------------------
+TIME_RANGE_RX = re.compile(r"(\d{1,2}:\d{2}\s*(?:am|pm))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:am|pm))", re.IGNORECASE)
+
+def click_next_and_wait_change():
+    def grab_label():
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, "[role='grid']")
+            return el.get_attribute("outerText")[:80]
+        except:
+            return str(time.time())
+    before = grab_label()
+    for by, sel in [
+        (By.XPATH, "((//*[contains(normalize-space(.),'Previous') and contains(normalize-space(.),'Next')])[1]//*[self::button or self::a][normalize-space()='Next'])[1]"),
+        (By.XPATH, "((//*[contains(normalize-space(.),'Previous') and contains(normalize-space(.),'Next')])[1]//*[self::button or self::a][contains(@aria-label,'Next') or contains(@title,'Next')])[1]"),
+    ]:
+        try:
+            nxt = WebDriverWait(driver, T.short).until(EC.element_to_be_clickable((by, sel)))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", nxt)
+            driver.execute_script("arguments[0].click();", nxt)
+            end = time.time() + T.med
+            while time.time() < end:
+                now = grab_label()
+                if now and now != before:
+                    return True
+                time.sleep(0.12)
+        except Exception:
+            pass
+    return False
+
+def parse_fullcalendar_period(view_html):
+    """
+    Robust parser:
+     - Prefer DOM-sourced column->ISO mapping via JS.
+     - If missing, use header td data-date or header day numbers + displayed month, but detect fc-other-month.
+     - Last resort: constrained generic scan.
+     - Always normalize and dedupe events.
+    """
+    soup = BeautifulSoup(view_html, "html.parser")
+    events = []
+    seen = set()
+
+    def add_event_if_new(start_dt, end_dt):
+        # normalize to minute resolution and dedupe
+        start_dt = start_dt.replace(second=0, microsecond=0)
+        end_dt   = end_dt.replace(second=0, microsecond=0)
+        if end_dt <= start_dt:
+            end_dt += timedelta(days=1)
+        key = (start_dt.isoformat(), end_dt.isoformat())
+        if key in seen:
+            return
+        seen.add(key)
+        events.append((start_dt, end_dt, "Lowe's 🛠️"))
+
+    def parse_dt(date_iso, time_str):
+        for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %I:%M%p"):
+            try:
+                return datetime.strptime(f"{date_iso} {time_str}", fmt)
+            except:
+                continue
+        return None
+
+    # 1) Try to get column->date mapping from live DOM (JS) — most reliable.
+    col_to_date = {}
+    try:
+        js = """
+        (function(){
+          var out=[];
+          var ths = document.querySelectorAll('table thead tr td');
+          if(!ths || ths.length===0){
+            // FullCalendar v5/6 day headers may be divs
+            ths = document.querySelectorAll('.fc-daygrid-day'); 
+          }
+          ths.forEach(function(td){
+            var d = td.getAttribute('data-date') || td.dataset && td.dataset.date || null;
+            var other = td.className || '';
+            var text = td.innerText||td.textContent||'';
+            out.push({date:d, cls: other, text: text.trim()});
+          });
+          return out;
+        })();
+        """
+        cols = driver.execute_script(js)
+        if cols and isinstance(cols, list):
+            for i, c in enumerate(cols, start=1):
+                if c.get("date") and re.match(r"^\d{4}-\d{2}-\d{2}$", c.get("date")):
+                    col_to_date[i] = c.get("date")
+                else:
+                    # mark other info so we can try to resolve later
+                    col_to_date[i] = {"text": c.get("text",""), "cls": c.get("cls","")}
+    except Exception:
+        col_to_date = {}
+
+    # 2) If JS returned non-empty mapping where values are plain strings (ISO), convert to simple map
+    pure_map = {}
+    for k,v in list(col_to_date.items()):
+        if isinstance(v, str):
+            pure_map[k] = v
+    if pure_map:
+        col_to_date = pure_map
+
+    # 3) If we don't have ISO mapping for all header columns, try to build from HTML header
+    if not any(isinstance(v, str) for v in col_to_date.values()):
+        header_row = soup.select_one("table thead tr")
+        month_year = None
+        # try common toolbar selectors for displayed month/year
+        tb = soup.select_one("span.toolbar-text.element-title") or soup.select_one(".fc-toolbar h2") or soup.select_one(".fc-toolbar .fc-center h2")
+        if tb:
+            month_year = tb.get_text(strip=True)
+            m = re.search(r"([A-Za-z]{3,9}\s+\d{4})", month_year)
+            if m:
+                month_year = m.group(1)
+        # Build mapping from header tds
+        if header_row:
+            header_tds = header_row.find_all("td", recursive=False)
+            for idx, td in enumerate(header_tds, start=1):
+                d_attr = td.get("data-date")
+                if d_attr and re.match(r"^\d{4}-\d{2}-\d{2}$", d_attr):
+                    col_to_date[idx] = d_attr
+                else:
+                    # day number text (may belong to prev/next month)
+                    txt = td.get_text(" ", strip=True)
+                    m = re.match(r"^(\d{1,2})$", txt or "")
+                    if m and month_year:
+                        # try parse, but ensure we select the correct month by inspecting classes
+                        try:
+                            for fmt in ("%b %Y %d", "%B %Y %d"):
+                                try:
+                                    dt = datetime.strptime(f"{month_year} {int(m.group(1))}", fmt)
+                                    col_to_date[idx] = dt.strftime("%Y-%m-%d")
+                                    break
+                                except:
+                                    continue
+                        except:
+                            pass
+
+    # 4) If we still don't have any mapping, leave col_to_date empty and parser will try other strategies
+    # At this point col_to_date can be partial map of idx->ISO
+
+    # Table-based parsing using col_to_date where available
+    try:
+        if col_to_date:
+            body_rows = soup.select("table tbody tr")
+            for r in body_rows:
+                tds = r.find_all("td", recursive=False)
+                for col_idx, td in enumerate(tds, start=1):
+                    date_iso = col_to_date.get(col_idx)
+                    # if date_iso is dict-like (text/cls), skip (we couldn't resolve to ISO)
+                    if not date_iso or isinstance(date_iso, dict):
+                        continue
+                    # prefer fc-time spans, then any time-like text in cell
+                    time_nodes = td.select("span.fc-time") + td.select(".fc-time") + td.select("div.time, span.time")
+                    for sp in time_nodes:
+                        timestr = sp.get_text(" ", strip=True)
+                        m = TIME_RANGE_RX.search(timestr or "")
+                        if m:
+                            s,e = m.group(1).lower(), m.group(2).lower()
+                            sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
+                            if sdt and edt:
+                                add_event_if_new(sdt, edt)
+                    # fallback: generic search inside TD cell text
+                    if not time_nodes:
+                        txt = td.get_text(" ", strip=True)
+                        for m in TIME_RANGE_RX.finditer(txt or ""):
+                            s,e = m.group(1).lower(), m.group(2).lower()
+                            sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
+                            if sdt and edt:
+                                add_event_if_new(sdt, edt)
+            if events:
+                dprint("parse: used table-based strategy (DOM header map)")
+                return events
+    except Exception as ex:
+        dprint("parse table-based error:", ex)
+
+    # Div/daygrid based strategy (if day containers with data-date)
+    try:
+        day_divs = soup.select("div.fc-daygrid-day, div.fc-day, div.fc-daygrid-day-frame")
+        if day_divs:
+            for day in day_divs:
+                date_iso = day.get("data-date") or None
+                if not date_iso:
+                    # try aria-label / extract embedded date string
+                    aria = day.get("aria-label") or ""
+                    m = re.search(r"(\d{4}-\d{2}-\d{2})", aria)
+                    if m:
+                        date_iso = m.group(1)
+                if not date_iso:
+                    continue
+                for ev in day.select(".fc-event, .fc-daygrid-event, .fc-list-item, .event"):
+                    txt = ev.get_text(" ", strip=True)
+                    m = TIME_RANGE_RX.search(txt or "")
+                    if m:
+                        s,e = m.group(1).lower(), m.group(2).lower()
+                        sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
+                        if sdt and edt:
+                            add_event_if_new(sdt, edt)
+            if events:
+                dprint("parse: used div-based daygrid strategy")
+                return events
+    except Exception as ex:
+        dprint("parse div-based error:", ex)
+
+    # Constrained generic scan: map each time-match only if we can find a clear nearby data-date ancestor
+    try:
+        for node in soup.find_all(string=TIME_RANGE_RX):
+            timestr = node.strip()
+            m = TIME_RANGE_RX.search(timestr)
+            if not m:
+                continue
+            candidate_date = None
+            parent = node.parent
+            for up in range(6):
+                if not parent:
+                    break
+                # check for data-date attribute
+                try:
+                    val = parent.get("data-date") if hasattr(parent, "get") else None
+                    if val and re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+                        candidate_date = val
+                        break
+                except Exception:
+                    pass
+                # check for an ancestor td with data-date
+                try:
+                    td = parent.find_parent("td")
+                    if td:
+                        v = td.get("data-date")
+                        if v and re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                            candidate_date = v
+                            break
+                except:
+                    pass
+                parent = parent.parent
+            if not candidate_date:
+                continue
+            s,e = m.group(1).lower(), m.group(2).lower()
+            sdt = parse_dt(candidate_date, s); edt = parse_dt(candidate_date, e)
+            if sdt and edt:
+                add_event_if_new(sdt, edt)
+        if events:
+            dprint("parse: used constrained generic scan")
+            return events
+    except Exception as ex:
+        dprint("parse generic-scan error:", ex)
+
+    return events
+
+def scrape_shifts_from_aside(max_clicks=None):
+    found = []
+    # primary selector for day cells
+    tds = driver.find_elements(By.CSS_SELECTOR, "td[data-date]")
+    if not tds:
+        tds = driver.find_elements(By.CSS_SELECTOR, "div.fc-daygrid-day[data-date], div[data-date]")
+
+    clicks = 0
+    for td in tds:
+        if max_clicks and clicks >= max_clicks:
+            break
+        date_iso = td.get_attribute("data-date")
+        if not date_iso:
+            continue
+        clicks += 1
+        try:
+            # click the day number if present, else the cell
+            try:
+                daynum = td.find_element(By.CSS_SELECTOR, ".fc-day-number")
+                js_click(daynum)
+            except:
+                js_click(td)
+            # wait briefly for panel to fill
+            panel_text = ""
+            try:
+                WebDriverWait(driver, 3).until(
+                    lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in (".employee-view-aside", ".aside", ".krn-list", ".panel-aside", ".side-panel", "aside"))
+                )
+            except:
+                pass
+            for sel in (".employee-view-aside", ".aside", ".krn-list", ".panel-aside", ".side-panel", "aside", ".shift-detail", ".shift-info"):
+                try:
+                    el = driver.find_element(By.CSS_SELECTOR, sel)
+                    panel_text = (el.get_attribute("innerText") or "")
+                    if panel_text.strip():
+                        break
+                except:
+                    panel_text = ""
+            if not panel_text:
+                try:
+                    right_col = driver.find_element(By.CSS_SELECTOR, ".right-column, .right-pane, .krn-panel, .panel-right")
+                    panel_text = (right_col.get_attribute("innerText") or "")
+                except:
+                    panel_text = ""
+            if not panel_text:
+                continue
+            for m in TIME_RANGE_RX.finditer(panel_text):
+                start_s = m.group(1).lower()
+                end_s   = m.group(2).lower()
+                try:
+                    sdt = datetime.strptime(f"{date_iso} {start_s}", "%Y-%m-%d %I:%M %p")
+                    edt = datetime.strptime(f"{date_iso} {end_s}",   "%Y-%m-%d %I:%M %p")
+                    if edt <= sdt:
+                        edt += timedelta(days=1)
+                    found.append((sdt, edt, "Lowe's 🛠️"))
+                except:
+                    continue
+        except Exception:
+            dprint("aside scrape error:", traceback.format_exc())
+            continue
+        finally:
+            time.sleep(0.12)
+    return found
+
+def run_scrape_cycle():
+    # Navigate
+    driver.get("https://lowescompanies-sso.prd.mykronos.com/ess#/")
+    print("🡺 Navigated directly to schedule portal")
+
+    # loose wait for calendar
+    try:
+        WebDriverWait(driver, 8).until(lambda d: d.find_elements(By.CSS_SELECTOR, "td[data-date], .fc-daygrid-day"))
+        # Extra robustness: wait for at least one event to appear if possible
+        try:
+            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".fc-event, .fc-daygrid-event, .event")))
+            time.sleep(1.0) # settle
+        except:
+            print("⚠️ No events appeared within 5s (might be empty schedule).")
+    except Exception:
+        pass
+
+    diagnostic_calendar_snapshot("before_save")
+    time.sleep(0.9)
+    html1 = save_view("my_schedule")
+
+    html2 = ""
+    if click_next_and_wait_change():
+        html2 = save_view("my_schedule_next")
+    else:
+        print("⚠️ Next button not found or period did not change.")
+
+    # Parse
+    found_events = []
+    e1 = parse_fullcalendar_period(html1)
+    dprint(f"🧩 Current period found {len(e1)} event(s).")
+    found_events.extend(e1)
+
+    if html2:
+        e2 = parse_fullcalendar_period(html2)
+        dprint(f"🧩 Next period found {len(e2)} event(s).")
+        found_events.extend(e2)
+    
+    # Fallback
+    if not found_events:
+        fallback = scrape_shifts_from_aside(max_clicks=50)
+        if fallback:
+            found_events.extend(fallback)
+            dprint(f"🧩 Found {len(fallback)} event(s) from aside scraping.")
+    
+    # De-dupe
+    found_events = sorted(set(found_events), key=lambda x: (x[0], x[1]))
+    return found_events
+
+# --------------------------
+# Google Calendar sync
+# --------------------------
+def get_calendar_service():
+    creds = None
+    # Use global CONFIG_DIR ("data") for persistence in Docker
+    TOKEN_PATH = os.path.join(CONFIG_DIR, "token.json")
+    CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
+
+    if not os.path.exists(CREDENTIALS_PATH):
+        print("\n⚠️ Google Credentials not found!")
+        print("To enable Google Calendar sync, you need a 'credentials.json' file.")
+        print("1. Go to: https://console.cloud.google.com/apis/credentials")
+        print("2. Create OAuth 2.0 Client ID (Desktop App).")
+        print("3. Enter the details below to generate the file:")
+        cid = input("Enter Client ID: ").strip()
+        csec = input("Enter Client Secret: ").strip()
+        if cid and csec:
+            data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
+            with open(CREDENTIALS_PATH, "w") as f:
+                json.dump(data, f)
+            print("✅ credentials.json created.")
+        else:
+            print("❌ Skipping Google Sync (missing credentials).")
+            return None
+
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                print("⚠️ Token expired or revoked. Re-authentication required.")
+                try: os.remove(TOKEN_PATH)
+                except: pass
+                creds = None
+        if not creds or not creds.valid:
+            print("🔑 Opening browser for reauthorization...")
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open(TOKEN_PATH, "w") as token_file:
+                token_file.write(creds.to_json())
+
+    return build("calendar", "v3", credentials=creds)
+
+def send_discord_update(changes):
+    if not DISCORD_WEBHOOK_URL or not changes:
+        return
+    msg = "📅 **Schedule Update:**\n" + "\n".join(changes)
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": msg}, timeout=10)
+        print("📨 Sent Discord notification.")
+    except Exception as e:
+        print(f"❌ Failed to send Discord notification: {e}")
+
+def sync_to_google_calendar(cal, calendar_id="primary"):
+    if not cal.events:
+        print("⏭️ Skipping Google Calendar sync (no parsed shifts).")
+        return
+
+    service = get_calendar_service()
+    if not service:
+        return
+
+    now = datetime.utcnow()
+    # MODIFIED: User requested "delete all before rewriting".
+    # We expand the window back to cover history (45 days) so we can clean up duplicates.
+    time_min = (now - timedelta(days=45)).isoformat() + "Z"
+    time_max = (now + timedelta(days=90)).isoformat() + "Z"
+
+    all_events_g = service.events().list(
+        calendarId=calendar_id,
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,
+        orderBy="startTime"
+    ).execute().get("items", [])
+
+    lowes_events = [e for e in all_events_g if e.get("summary") == "Lowe's 🛠️"]
+    deleted_dates = set()
+
+    for event in lowes_events:
+        start = event["start"].get("dateTime")
+        if not start:
+            continue
+        date_key = start[:10]
+        try:
+            service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
+            deleted_dates.add(date_key)
+            print(f"🗑️ Deleted old shift on {date_key} {start[11:]}")
+        except Exception as e:
+            print(f"❌ Failed to delete: {e}")
+
+    added_dates = set()
+    
+    # Insert new events
+    for ev in cal.events:
+        date_key = ev.begin.format("YYYY-MM-DD")
+        start = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
+        end   = ev.end.format("YYYY-MM-DDTHH:mm:ss")
+        try:
+            service.events().insert(calendarId=calendar_id, body={
+                "summary": ev.name,
+                "start": {"dateTime": start, "timeZone": TZ},
+                "end":   {"dateTime": end,   "timeZone": TZ},
+            }).execute()
+            added_dates.add(date_key)
+            print(f"✅ Added shift on {date_key} {start[11:]}–{end[11:]}")
+        except Exception as e:
+            print(f"❌ Failed to add event: {e}")
+
+    changed_dates = sorted(added_dates.union(deleted_dates))
+    if changed_dates:
+        changes = []
+        for d in changed_dates:
+            if d in deleted_dates and d in added_dates:
+                changes.append(f"🔁 Updated shift on {d}")
+            elif d in deleted_dates:
+                changes.append(f"❌ Removed shift on {d}")
+            elif d in added_dates:
+                changes.append(f"➕ New shift on {d}")
+        send_discord_update(changes)
+    else:
+        print("✅ No calendar changes; no Discord notification.")
+
+def main_task():
+    print(f"\n🚀 Starting sync job at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
+    all_events = []
+    for attempt in range(1, 4):
+        print(f"🔄 Scrape Attempt {attempt}/3...")
+        try:
+            all_events = run_scrape_cycle()
+            if all_events:
+                break
+            print("⚠️ No shifts found in this attempt. Retrying...")
+            time.sleep(3)
+        except Exception as e:
+            print(f"❌ Scrape cycle failed: {e}")
+            time.sleep(3)
+
+    if not all_events:
+        print("❌ All scrape attempts failed. Skipping sync.")
+        return
+
+    # Build ICS
+    calendar = Calendar()
+    for start_dt, end_dt, label in all_events:
+        ev = Event()
+        ev.name = label
+        ev.begin = start_dt
+        ev.end   = end_dt
+        calendar.events.add(ev)
+
+    print(f"✅ Parsed {len(all_events)} shift(s).")
+
+    ics_name = os.path.join(CONFIG_DIR, f"schedule_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.ics")
+    with open(ics_name, "w", encoding="utf-8") as f:
+        f.write(str(calendar))
+    print(f"🗂️ Calendar saved as {ics_name}")
+
+    # Do sync
+    sync_to_google_calendar(calendar)
+    print(f"💤 Job finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+# --------------------------
+# Google Calendar sync (unchanged)
+# --------------------------
+def get_calendar_service():
+    creds = None
+    # BASE_DIR = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    # TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
+    # CREDENTIALS_PATH = os.path.join(BASE_DIR, "credentials.json")
+    
+    # Use global CONFIG_DIR ("data") for persistence in Docker
+    TOKEN_PATH = os.path.join(CONFIG_DIR, "token.json")
+    CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
+
+    if not os.path.exists(CREDENTIALS_PATH):
+        print("\n⚠️ Google Credentials not found!")
+        print("To enable Google Calendar sync, you need a 'credentials.json' file.")
+        print("1. Go to: https://console.cloud.google.com/apis/credentials")
+        print("2. Create OAuth 2.0 Client ID (Desktop App).")
+        print("3. Enter the details below to generate the file:")
+        cid = input("Enter Client ID: ").strip()
+        csec = input("Enter Client Secret: ").strip()
+        if cid and csec:
+            data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
+            with open(CREDENTIALS_PATH, "w") as f:
+                json.dump(data, f)
+            print("✅ credentials.json created.")
+        else:
+            print("❌ Skipping Google Sync (missing credentials).")
+            return None
+
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                print("⚠️ Token expired or revoked. Re-authentication required.")
+                try: os.remove(TOKEN_PATH)
+                except: pass
+                creds = None
+        if not creds or not creds.valid:
+            print("🔑 Opening browser for reauthorization...")
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open(TOKEN_PATH, "w") as token_file:
+                token_file.write(creds.to_json())
+
+    return build("calendar", "v3", credentials=creds)
+
+def send_discord_update(changes):
+    if not DISCORD_WEBHOOK_URL or not changes:
+        return
+    msg = "📅 **Schedule Update:**\n" + "\n".join(changes)
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": msg}, timeout=10)
+        print("📨 Sent Discord notification.")
+    except Exception as e:
+        print(f"❌ Failed to send Discord notification: {e}")
+
+def sync_to_google_calendar(cal, calendar_id="primary"):
+    if not cal.events:
+        print("⏭️ Skipping Google Calendar sync (no parsed shifts).")
+        return
+
+    service = get_calendar_service()
+    now = datetime.utcnow()
+    # MODIFIED: User requested "delete all before rewriting".
+    # We expand the window back to cover history (45 days) so we can clean up duplicates.
+    time_min = (now - timedelta(days=45)).isoformat() + "Z"
+    time_max = (now + timedelta(days=90)).isoformat() + "Z"
+
+    all_events_g = service.events().list(
+        calendarId=calendar_id,
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,
+        orderBy="startTime"
+    ).execute().get("items", [])
+
+    lowes_events = [e for e in all_events_g if e.get("summary") == "Lowe's 🛠️"]
+    deleted_dates = set()
+
+    for event in lowes_events:
+        start = event["start"].get("dateTime")
+        if not start:
+            continue
+        date_key = start[:10]
+        try:
+            service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
+            deleted_dates.add(date_key)
+            print(f"🗑️ Deleted old shift on {date_key} {start[11:]}")
+        except Exception as e:
+            print(f"❌ Failed to delete: {e}")
+
+    added_dates = set()
+    
+    added_dates = set()
+    
+    # Insert new events
+    for ev in cal.events:
+        date_key = ev.begin.format("YYYY-MM-DD")
+        start = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
+        end   = ev.end.format("YYYY-MM-DDTHH:mm:ss")
+        try:
+            service.events().insert(calendarId=calendar_id, body={
+                "summary": ev.name,
+                "start": {"dateTime": start, "timeZone": TZ},
+                "end":   {"dateTime": end,   "timeZone": TZ},
+            }).execute()
+            added_dates.add(date_key)
+            print(f"✅ Added shift on {date_key} {start[11:]}–{end[11:]}")
+        except Exception as e:
+            print(f"❌ Failed to add event: {e}")
+
+    changed_dates = sorted(added_dates.union(deleted_dates))
+    if changed_dates:
+        changes = []
+        for d in changed_dates:
+            if d in deleted_dates and d in added_dates:
+                changes.append(f"🔁 Updated shift on {d}")
+            elif d in deleted_dates:
+                changes.append(f"❌ Removed shift on {d}")
+            elif d in added_dates:
+                changes.append(f"➕ New shift on {d}")
+        send_discord_update(changes)
+    else:
+        print("✅ No calendar changes; no Discord notification.")
+
+# --------------------------
+# Scheduler / Entry Point
+# --------------------------
+if __name__ == "__main__":
+    if RUN_MODE == "once":
+        main_task()
+        print("👋 Run complete. Exiting.")
+        driver.quit()
+    else:
+        print(f"🕰️ Scheduled Mode Enabled: {RUN_MODE} {RUN_VALUE}")
+        
+        # Run once immediately on startup? Usually desirable.
+        main_task()
+
+        if RUN_MODE == "daily":
+            # RUN_VALUE should be HH:MM
+            schedule.every().day.at(RUN_VALUE).do(main_task)
+            print(f"📅 Next run scheduled for {RUN_VALUE}")
+        elif RUN_MODE == "interval":
+            # RUN_VALUE is hours int
+            try:
+                h = int(RUN_VALUE)
+                schedule.every(h).hours.do(main_task)
+                print(f"⏳ Runs every {h} hour(s).")
+            except:
+                print("❌ Invalid interval value. Running once and exiting.")
+                driver.quit()
+                sys.exit(1)
+        
+        print("🟢 Scheduler running... (Press Ctrl+C to stop)")
+        try:
+            while True:
+                schedule.run_pending()
+                time.sleep(60)
+        except KeyboardInterrupt:
+            print("🛑 Stopping scheduler.")
+            driver.quit()

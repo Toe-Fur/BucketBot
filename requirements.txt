@@ -1,0 +1,12 @@
+selenium
+pytesseract
+Pillow
+ics
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+beautifulsoup4
+requests
+arrow
+schedule
+argparse

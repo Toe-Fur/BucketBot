@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  lowes-bot:
+    build: .
+    image: lowes-scheduler-bot
+    container_name: lowes-scheduler-bot
+    volumes:
+      - ./data:/app/data
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+    # Restart policy: beware, if config is missing, it will restart endlessly.
+    # Best to run once interactively first.
+    restart: on-failure

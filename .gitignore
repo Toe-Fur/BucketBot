@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Docker
+.env
+dist/
+build/
+*.spec
+
+# App Data (Credentials, Tokens, Config, Schedules)
+data/
+*.ics
+*.html
+*.png
+debug_*.html
+debug_*.png
+
+# VS Code
+.vscode/
