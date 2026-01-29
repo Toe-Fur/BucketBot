@@ -732,12 +732,32 @@ def get_calendar_service():
     CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
 
     if not os.path.exists(CREDENTIALS_PATH):
-        print("\n⚠️ Google Credentials not found!")
-        print("To enable Google Calendar sync, you need a 'credentials.json' file.")
-        print("1. Go to: https://console.cloud.google.com/apis/credentials")
-        print("2. Create OAuth 2.0 Client ID (Desktop App).")
-        print("3. Enter the details below to generate the file:")
-        cid = input("Enter Client ID: ").strip()
+        # Check environment variables first (Headless / Docker Compose setup)
+        env_cid = os.getenv("GOOGLE_CLIENT_ID")
+        env_csec = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if env_cid and env_csec:
+            print("🤖 Found Google Credentials in environment variables. Generating credentials.json...")
+            data = {"installed":{"client_id":env_cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":env_csec,"redirect_uris":["http://localhost"]}}
+            with open(CREDENTIALS_PATH, "w") as f:
+                json.dump(data, f)
+            print("✅ credentials.json created from environment.")
+        else:
+            print("\n⚠️ Google Credentials not found!")
+            print("To enable Google Calendar sync, you need a 'credentials.json' file.")
+            print("1. Go to: https://console.cloud.google.com/apis/credentials")
+            print("2. Create OAuth 2.0 Client ID (Desktop App).")
+            print("3. Enter the details below to generate the file:")
+            cid = input("Enter Client ID: ").strip()
+            csec = input("Enter Client Secret: ").strip()
+            if cid and csec:
+                data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
+                with open(CREDENTIALS_PATH, "w") as f:
+                    json.dump(data, f)
+                print("✅ credentials.json created.")
+            else:
+                print("❌ Skipping Google Sync (missing credentials).")
+                return None
         csec = input("Enter Client Secret: ").strip()
         if cid and csec:
             data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}

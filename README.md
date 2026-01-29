@@ -9,24 +9,54 @@ A Dockerized Python bot that scrapes your Lowe's schedule (Kronos) and syncs it 
 - **Secure**: Interactive setup helper for Lowe's and Google credentials.
 - **Schedule Mode**: Can run once, daily, or on a recurring interval.
 
-## Deployment (Docker)
+## Deployment (Docker / Dockge)
 
-1.  **Clone the Repo**:
+### Option 1: Headless / Dockge (Recommended)
+You can configure everything via environment variables in your `compose.yaml` without needing to interact with a terminal.
+
+```yaml
+services:
+  bucket-bot:
+    build: https://github.com/Toe-Fur/BucketBot.git#main
+    container_name: bucket-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    stdin_open: true
+    tty: true
+    environment:
+      # Lowe's Login
+      - LOWES_USERNAME=99999
+      - LOWES_PASSWORD=YourPassword!
+      - LOWES_PIN=1234
+      
+      # Discord (Optional)
+      - LOWES_DISCORD_WEBHOOK=
+      
+      # Schedule Settings
+      - RUN_MODE=daily     # Options: daily, interval, once
+      - RUN_VALUE=08:00    # Time (24h) or Interval (hours)
+      
+      # Google Credentials (Optional)
+      - GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=your-client-secret
+```
+
+### Option 2: Interactive Setup
+1.  Clone the repo:
     ```bash
     git clone https://github.com/your-username/lowes-bot.git
     cd lowes-bot
     ```
 
-2.  **Run Setup (First Time)**:
-    Run interactively to enter your credentials.
+2.  Run setup:
     ```bash
     docker-compose run --rm lowes-bot
     ```
     - Follow the prompts to enter your Lowe's credentials.
     - If you don't have Google Credentials, it will guide you to create them.
 
-3.  **Run in Background**:
-    Once configured, let it run forever (if you chose a schedule):
+3.  Run in Background:
     ```bash
     docker-compose up -d
     ```
@@ -38,15 +68,8 @@ A Dockerized Python bot that scrapes your Lowe's schedule (Kronos) and syncs it 
   docker-compose run --rm lowes-bot --reset
   ```
 
-## Development
-
-- **Files**:
-  - `lowes_schedule_bot.py`: Main logic.
-  - `docker-compose.yml`: Docker orchestration.
-  - `data/`: Contains `config.json`, `token.json`, `credentials.json` (Ignored by Git).
-
 ## Google API Setup
 You need a `credentials.json` file from Google Cloud Console.
 1.  Enable "Google Calendar API".
 2.  Create "OAuth Client ID" (Desktop App).
-3.  Download JSON or paste ID/Secret when prompted by the bot.
+3.  Use the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` env vars OR let the bot prompt you.
