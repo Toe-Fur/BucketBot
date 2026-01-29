@@ -37,9 +37,12 @@ services:
       - RUN_MODE=daily     # Options: daily, interval, once
       - RUN_VALUE=08:00    # Time (24h) or Interval (hours)
       
-      # Google Credentials (Optional)
+      # Google Credentials (Optional, if you don't have json file yet)
       - GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=your-client-secret
+      
+      # Google Token (REQUIRED for headless server - copy from your PC's token.json)
+      - GOOGLE_TOKEN_JSON='{"token": "...", "refresh_token": "...", ...}'
 ```
 
 ### Option 2: Interactive Setup
