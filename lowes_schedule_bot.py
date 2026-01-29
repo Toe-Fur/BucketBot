@@ -734,6 +734,14 @@ def get_calendar_service():
     CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
 
     if not os.path.exists(CREDENTIALS_PATH):
+        # DEBUG: Print environment status
+        print(f"DEBUG: Checking environment for Google Creds...")
+        print(f"DEBUG: GOOGLE_CLIENT_ID in env: {'GOOGLE_CLIENT_ID' in os.environ}")
+        if 'GOOGLE_CLIENT_ID' in os.environ:
+             val = os.environ['GOOGLE_CLIENT_ID']
+             print(f"DEBUG: Raw value: '{val}'")
+             print(f"DEBUG: Stripped value: '{val.strip().strip(chr(34)).strip(chr(39))}'")
+        
         # Check environment variables first (Headless / Docker Compose setup)
         # Strip quotes just in case user added them in docker-compose
         env_cid = (os.getenv("GOOGLE_CLIENT_ID") or "").strip('"').strip("'").strip()
