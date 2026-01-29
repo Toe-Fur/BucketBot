@@ -1,5 +1,8 @@
 # Base Image
 FROM python:3.11-slim
+LABEL version="2.5"
+LABEL description="Force rebuild buster"
+
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \

@@ -24,7 +24,14 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-print("🤖 Lowe's Bot - v2.1 (Headless Fix)")
+VERSION = "v2.5 (FINAL_BOSS_DEBUG)"
+print(f"🤖 Lowe's Bot - {VERSION}", flush=True)
+print(f"🔍 [BOOT] Environment Keys: {list(os.environ.keys())}", flush=True)
+if "GOOGLE_CLIENT_ID" in os.environ:
+    print(f"🔍 [BOOT] GOOGLE_CLIENT_ID is DETECTED (length: {len(os.environ['GOOGLE_CLIENT_ID'])})", flush=True)
+else:
+    print(f"🔍 [BOOT] GOOGLE_CLIENT_ID is MISSING from environment.", flush=True)
+
 
 # --------------------------
 # Config / Env
