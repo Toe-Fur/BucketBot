@@ -734,41 +734,52 @@ def get_calendar_service():
     CREDENTIALS_PATH = os.path.join(CONFIG_DIR, "credentials.json")
 
     if not os.path.exists(CREDENTIALS_PATH):
-        # DEBUG: Print environment status
-        print(f"DEBUG: Checking environment for Google Creds...")
-        print(f"DEBUG: GOOGLE_CLIENT_ID in env: {'GOOGLE_CLIENT_ID' in os.environ}")
-        if 'GOOGLE_CLIENT_ID' in os.environ:
-             val = os.environ['GOOGLE_CLIENT_ID']
-             print(f"DEBUG: Raw value: '{val}'")
-             print(f"DEBUG: Stripped value: '{val.strip().strip(chr(34)).strip(chr(39))}'")
+        # Extremely robust environment check
+        print("🔍 Searching for Google Credentials in Environment...", flush=True)
+        env_keys = {k.upper(): v for k, v in os.environ.items()}
         
-        # Check environment variables first (Headless / Docker Compose setup)
-        # Strip quotes just in case user added them in docker-compose
-        env_cid = (os.getenv("GOOGLE_CLIENT_ID") or "").strip('"').strip("'").strip()
-        env_csec = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip('"').strip("'").strip()
+        cid_key = "GOOGLE_CLIENT_ID"
+        sec_key = "GOOGLE_CLIENT_SECRET"
+        
+        env_cid = env_keys.get(cid_key)
+        env_csec = env_keys.get(sec_key)
         
         if env_cid and env_csec:
-            print("🤖 Found Google Credentials in environment variables. Generating credentials.json...")
+            # Strip quotes and whitespace
+            env_cid = env_cid.strip().strip('"').strip("'")
+            env_csec = env_csec.strip().strip('"').strip("'")
+            
+            print(f"🤖 Found Google Credentials in Environment (ID starts with: {env_cid[:10]}...). Generating file...", flush=True)
             data = {"installed":{"client_id":env_cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":env_csec,"redirect_uris":["http://localhost"]}}
-            with open(CREDENTIALS_PATH, "w") as f:
-                json.dump(data, f)
-            print("✅ credentials.json created from environment.")
-        else:
-            print("\n⚠️ Google Credentials not found!")
-            print("To enable Google Calendar sync, you need a 'credentials.json' file.")
-            print("1. Go to: https://console.cloud.google.com/apis/credentials")
-            print("2. Create OAuth 2.0 Client ID (Desktop App).")
-            print("3. Enter the details below to generate the file:")
-            cid = input("Enter Client ID: ").strip()
-            csec = input("Enter Client Secret: ").strip()
-            if cid and csec:
-                data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
+            try:
                 with open(CREDENTIALS_PATH, "w") as f:
                     json.dump(data, f)
-                print("✅ credentials.json created.")
+                print("✅ credentials.json successfully created from environment.", flush=True)
+            except Exception as e:
+                print(f"❌ Failed to write credentials.json: {e}", flush=True)
+        else:
+            # Fallback to interactive ONLY if we are in a terminal
+            if sys.stdin.isatty():
+                print("\n⚠️ Google Credentials not found in environment!", flush=True)
+                print("1. Go to: https://console.cloud.google.com/apis/credentials", flush=True)
+                print("2. Create OAuth 2.0 Client ID (Desktop App).", flush=True)
+                try:
+                    cid = input("Enter Client ID: ").strip()
+                    csec = input("Enter Client Secret: ").strip()
+                    if cid and csec:
+                        data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
+                        with open(CREDENTIALS_PATH, "w") as f:
+                            json.dump(data, f)
+                        print("✅ credentials.json created interactively.", flush=True)
+                except (EOFError, KeyboardInterrupt):
+                    print("🛑 Headless interruption during setup. Aborting sync.", flush=True)
+                    return None
             else:
-                print("❌ Skipping Google Sync (missing credentials).")
+                print("\n❌ CRITICAL: Google Credentials missing in environment (and no terminal detected).", flush=True)
+                print("➡️ Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your compose.yaml.", flush=True)
+                print(f"DEBUG: Scanned {len(os.environ)} env vars. Found keys: {list(env_keys.keys())}", flush=True)
                 return None
+
 
 
     if os.path.exists(TOKEN_PATH):
