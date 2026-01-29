@@ -735,8 +735,9 @@ def get_calendar_service():
 
     if not os.path.exists(CREDENTIALS_PATH):
         # Check environment variables first (Headless / Docker Compose setup)
-        env_cid = os.getenv("GOOGLE_CLIENT_ID")
-        env_csec = os.getenv("GOOGLE_CLIENT_SECRET")
+        # Strip quotes just in case user added them in docker-compose
+        env_cid = (os.getenv("GOOGLE_CLIENT_ID") or "").strip('"').strip("'").strip()
+        env_csec = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip('"').strip("'").strip()
         
         if env_cid and env_csec:
             print("🤖 Found Google Credentials in environment variables. Generating credentials.json...")
