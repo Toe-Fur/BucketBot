@@ -78,8 +78,8 @@ def load_config():
     webhook  = config.get("LOWES_DISCORD_WEBHOOK") or os.getenv("LOWES_DISCORD_WEBHOOK", "")
     
     # Schedule Config
-    run_mode = config.get("RUN_MODE", "once")
-    run_value = config.get("RUN_VALUE", "")
+    run_mode = config.get("RUN_MODE") or os.getenv("RUN_MODE") or "once"
+    run_value = config.get("RUN_VALUE") or os.getenv("RUN_VALUE") or ""
 
     # If running interactively AND not configured via Env, prompt for schedule mode.
     # checking os.getenv("RUN_MODE") ensures that Dockge/Compose setups with Env vars skip this prompt.
