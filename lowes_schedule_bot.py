@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.8"
+VERSION = "v3.4.9"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -775,15 +775,7 @@ def run_scrape_cycle():
             print(f"🧩 Page {i}: Found {len(grid_events)} event(s) via Grid parser.")
             found_events.extend(grid_events)
         else:
-            print(f"⚠️ Page {i}: Grid parser found 0 events. Attempting Aside Crawler...")
-            # If grid fails (List view or rendering delay), try the robust aside crawler
-            # This only scrapes the days visible in the current view
-            aside_events = scrape_shifts_from_aside()
-            if aside_events:
-                print(f"🧩 Page {i}: Found {len(aside_events)} event(s) via Aside Crawler.")
-                found_events.extend(aside_events)
-            else:
-                print(f"⚠️ Page {i}: Both parsers found 0 events.")
+            print(f"⚠️ Page {i}: Grid parser found 0 events.")
         
         # 3. Move to next page
         if i < 3: # don't click next on the last allowed page
