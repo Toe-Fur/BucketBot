@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.4"
+VERSION = "v3.4.5"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -609,48 +609,50 @@ def parse_fullcalendar_period(view_html):
     except Exception as ex:
         dprint("parse div-based error:", ex)
 
-    # Constrained generic scan: map each time-match only if we can find a clear nearby data-date ancestor
+    # 5) LAST RESORT: Global Brute Force Scan
+    # If standard strategies found nothing, scan every single node for a time range
+    # and look for ANY date-like string (YYYY-MM-DD) in its ancestors or siblings.
     try:
-        for node in soup.find_all(string=TIME_RANGE_RX):
-            timestr = node.strip()
-            m = TIME_RANGE_RX.search(timestr)
-            if not m:
-                continue
-            candidate_date = None
-            parent = node.parent
-            for up in range(6):
-                if not parent:
-                    break
-                # check for data-date attribute
-                try:
-                    val = parent.get("data-date") if hasattr(parent, "get") else None
-                    if val and re.match(r"^\d{4}-\d{2}-\d{2}$", val):
-                        candidate_date = val
+        if not events:
+            # Find all text nodes that look like times
+            for node in soup.find_all(string=TIME_RANGE_RX):
+                m = TIME_RANGE_RX.search(node)
+                if not m: continue
+                
+                # Search ancestors for data-date or text dates
+                candidate_date = None
+                curr = node.parent
+                for _ in range(10): # deep search
+                    if not curr: break
+                    
+                    # Check attribute
+                    d = curr.get("data-date")
+                    if d and re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+                        candidate_date = d
                         break
-                except Exception:
-                    pass
-                # check for an ancestor td with data-date
-                try:
-                    td = parent.find_parent("td")
-                    if td:
-                        v = td.get("data-date")
-                        if v and re.match(r"^\d{4}-\d{2}-\d{2}$", v):
-                            candidate_date = v
+                    
+                    # Check text content of this container (e.g. headers or labels)
+                    # But only if it's a small container (to avoid matching unrelated dates)
+                    t = curr.get_text(" ", strip=True)
+                    if len(t) < 200:
+                        m_date = re.search(r"(\d{4}-\d{2}-\d{2})", t)
+                        if m_date:
+                            candidate_date = m_date.group(1)
                             break
-                except:
-                    pass
-                parent = parent.parent
-            if not candidate_date:
-                continue
-            s,e = m.group(1).lower(), m.group(2).lower()
-            sdt = parse_dt(candidate_date, s); edt = parse_dt(candidate_date, e)
-            if sdt and edt:
-                add_event_if_new(sdt, edt)
+                    curr = curr.parent
+                
+                if candidate_date:
+                    s,e = m.group(1).lower(), m.group(2).lower()
+                    sdt = parse_dt(candidate_date, s); edt = parse_dt(candidate_date, e)
+                    if sdt and edt:
+                        add_event_if_new(sdt, edt)
+
         if events:
-            dprint("parse: used constrained generic scan")
+            if not any(strategy in dprint.last_msg for strategy in ["table", "div", "generic"]):
+                dprint("parse: used global brute-force scanner")
             return events
     except Exception as ex:
-        dprint("parse generic-scan error:", ex)
+        dprint("parse brute-force error:", ex)
 
     return events
 
@@ -1030,6 +1032,16 @@ def main_task():
 # --------------------------
 if __name__ == "__main__":
     print(f"Lowe's Schedule Synchronization Service - {VERSION}")
+    
+    # Timezone Diagnostic
+    print(f"🌍 Active Timezone: {TZ}")
+    try:
+        import time as ttime
+        sys_tz = ttime.tzname[0]
+        if TZ == "America/New_York" and sys_tz in ["PST", "PDT", "MST", "CST"]:
+             print(f"⚠️  WARNING: Your bot is set to New York time, but your server is in {sys_tz}.")
+             print(f"   If your store is NOT in NY, shifts will be shifted by several hours!")
+    except: pass
     if RUN_MODE == "once":
         main_task()
         print("Synchronization completed successfully. Exiting.")
