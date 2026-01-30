@@ -1,7 +1,7 @@
 # Base Image
 FROM python:3.11-slim
-LABEL version="2.5"
-LABEL description="Force rebuild buster"
+LABEL version="3.1"
+LABEL description="Lowe's Scheduler Bot - Improved Reliability"
 
 
 # Set environment variables

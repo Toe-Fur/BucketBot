@@ -24,14 +24,11 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.0.0"
+VERSION = "v3.1.0"
 # --------------------------
 # Config / Env
 # --------------------------
-# --------------------------
-# Config / Env
-# --------------------------
-TZ = "America/Los_Angeles"
+TZ = os.getenv("TZ", "America/New_York") # Default to NY if no TZ is set
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 # DISCORD_WEBHOOK_URL will be loaded from config or env
 
@@ -294,16 +291,28 @@ def diagnostic_calendar_snapshot(tag="diag"):
 # --------------------------
 # Login → MyLowesLife → UKG (keeps your original flow)
 # --------------------------
-driver.get("https://www.myloweslife.com")
-WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
-driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
-driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
-driver.find_element(By.ID, "loginButton_0").click()
+def login_to_portal():
+    print("🔑 Logging into Lowe's Portal...")
+    driver.get("https://www.myloweslife.com")
+    try:
+        WebDriverWait(driver, T.med).until(EC.presence_of_element_located((By.ID, "idToken2")))
+    except Exception:
+        # If we are already logged in (unlikely in headless but good to check)
+        if "Home" in driver.title or "MyLowesLife" in driver.page_source:
+             print("✅ Already logged in.")
+             return True
+        raise
 
-WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
-WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
-driver.find_element(By.ID, "idToken1").send_keys(PIN)
-driver.find_element(By.ID, "loginButton_0").click()
+    driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
+    driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
+    driver.find_element(By.ID, "loginButton_0").click()
+    
+    WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
+    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
+    driver.find_element(By.ID, "idToken1").send_keys(PIN)
+    driver.find_element(By.ID, "loginButton_0").click()
+    print("✅ Login successful.")
+    return True
 
 # Utility to open the UKG tile if needed (kept for fallback)
 def open_ukg_tile():
@@ -747,20 +756,20 @@ def get_calendar_service():
             env_cid = env_cid.strip().strip('"').strip("'")
             env_csec = env_csec.strip().strip('"').strip("'")
             
-            print(f"🤖 Found Google Credentials in Environment (ID starts with: {env_cid[:10]}...). Generating file...", flush=True)
+            print(f"🔹 Authenticating with Google Credentials from environment...", flush=True)
             data = {"installed":{"client_id":env_cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":env_csec,"redirect_uris":["http://localhost"]}}
             try:
                 with open(CREDENTIALS_PATH, "w") as f:
                     json.dump(data, f)
-                print("✅ credentials.json successfully created from environment.", flush=True)
+                print("✅ Service credentials generated from environment.", flush=True)
             except Exception as e:
-                print(f"❌ Failed to write credentials.json: {e}", flush=True)
+                print(f"❌ Failed to initialize credentials: {e}", flush=True)
         else:
             # Fallback to interactive ONLY if we are in a terminal
             if sys.stdin.isatty():
-                print("\n⚠️ Google Credentials not found in environment!", flush=True)
-                print("1. Go to: https://console.cloud.google.com/apis/credentials", flush=True)
-                print("2. Create OAuth 2.0 Client ID (Desktop App).", flush=True)
+                print("\nℹ️ Setup: Manual Google Calendar authorization required.", flush=True)
+                print("1. Navigate to: https://console.cloud.google.com/apis/credentials", flush=True)
+                print("2. Obtain OAuth 2.0 Client ID (Desktop App).", flush=True)
                 try:
                     cid = input("Enter Client ID: ").strip()
                     csec = input("Enter Client Secret: ").strip()
@@ -768,31 +777,29 @@ def get_calendar_service():
                         data = {"installed":{"client_id":cid,"project_id":"lowes-scheduler","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":csec,"redirect_uris":["http://localhost"]}}
                         with open(CREDENTIALS_PATH, "w") as f:
                             json.dump(data, f)
-                        print("✅ credentials.json created interactively.", flush=True)
+                        print("✅ Credentials saved locally.", flush=True)
                 except (EOFError, KeyboardInterrupt):
-                    print("🛑 Headless interruption during setup. Aborting sync.", flush=True)
+                    print("🛑 Setup interrupted. Synchronization aborted.", flush=True)
                     return None
             else:
-                print("\n❌ CRITICAL: Google Credentials missing in environment (and no terminal detected).", flush=True)
-                print("➡️ Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your compose.yaml.", flush=True)
-                print(f"DEBUG: Scanned {len(os.environ)} env vars. Found keys: {list(env_keys.keys())}", flush=True)
+                # ONLY PRINT IF MISSING
+                print(f"\n❌ CRITICAL ERROR: Google Credentials (GOOGLE_CLIENT_ID/SECRET) not provided.", flush=True)
+                print("➡️ Please verify your environment configuration in your service manager or container environment.", flush=True)
                 return None
-
-
 
     if not os.path.exists(TOKEN_PATH):
         # Support injecting the authorized token via environment variable for headless setups
         env_token = (os.getenv("GOOGLE_TOKEN_JSON") or "").strip().strip('"').strip("'")
         if env_token:
-            print("🤖 Found Google Token in Environment. Generating token.json...", flush=True)
+            print("🔹 Initializing Google Token from environment...", flush=True)
             try:
                 # Validate JSON before writing
                 token_data = json.loads(env_token)
                 with open(TOKEN_PATH, "w") as f:
                     json.dump(token_data, f)
-                print("✅ token.json successfully created from environment.", flush=True)
+                print("✅ Token initialized.", flush=True)
             except Exception as e:
-                print(f"❌ Failed to parse/write GOOGLE_TOKEN_JSON: {e}", flush=True)
+                print(f"❌ Failed to parse Google Token: {e}", flush=True)
 
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
@@ -849,37 +856,52 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
     ).execute().get("items", [])
 
     lowes_events = [e for e in all_events_g if e.get("summary") == "Lowe's 🛠️"]
-    deleted_dates = set()
+    
+    # Smart Sync Logic:
+    # 1. Map existing events by (start, end)
+    # 2. Map parsed events by (start, end)
+    # 3. Delete events in GCal that are NOT in parsed list
+    # 4. Add events in parsed list that are NOT in GCal
 
-    for event in lowes_events:
-        start = event["start"].get("dateTime")
-        if not start:
-            continue
-        date_key = start[:10]
-        try:
-            service.events().delete(calendarId=calendar_id, eventId=event["id"]).execute()
-            deleted_dates.add(date_key)
-            print(f"🗑️ Deleted old shift on {date_key} {start[11:]}")
-        except Exception as e:
-            print(f"❌ Failed to delete: {e}")
+    g_map = {}
+    for e in lowes_events:
+        s = e["start"].get("dateTime")
+        en = e["end"].get("dateTime")
+        if s and en:
+            # Normalize strings for comparison
+            s = s[:19] # YYYY-MM-DDTHH:mm:ss
+            en = en[:19]
+            g_map[(s, en)] = e["id"]
+
+    p_map = {}
+    for ev in cal.events:
+        s = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
+        en = ev.end.format("YYYY-MM-DDTHH:mm:ss")
+        p_map[(s, en)] = ev
+
+    deleted_dates = set()
+    for (s, en), eid in g_map.items():
+        if (s, en) not in p_map:
+            try:
+                service.events().delete(calendarId=calendar_id, eventId=eid).execute()
+                deleted_dates.add(s[:10])
+                print(f"🗑️ Deleted stale shift on {s[:10]} {s[11:]}")
+            except Exception as e:
+                print(f"❌ Failed to delete: {e}")
 
     added_dates = set()
-    
-    # Insert new events
-    for ev in cal.events:
-        date_key = ev.begin.format("YYYY-MM-DD")
-        start = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
-        end   = ev.end.format("YYYY-MM-DDTHH:mm:ss")
-        try:
-            service.events().insert(calendarId=calendar_id, body={
-                "summary": ev.name,
-                "start": {"dateTime": start, "timeZone": TZ},
-                "end":   {"dateTime": end,   "timeZone": TZ},
-            }).execute()
-            added_dates.add(date_key)
-            print(f"✅ Added shift on {date_key} {start[11:]}–{end[11:]}")
-        except Exception as e:
-            print(f"❌ Failed to add event: {e}")
+    for (s, en), ev in p_map.items():
+        if (s, en) not in g_map:
+            try:
+                service.events().insert(calendarId=calendar_id, body={
+                    "summary": ev.name,
+                    "start": {"dateTime": s, "timeZone": TZ},
+                    "end":   {"dateTime": en,  "timeZone": TZ},
+                }).execute()
+                added_dates.add(s[:10])
+                print(f"✅ Added new shift on {s[:10]} {s[11:]}–{en[11:]}")
+            except Exception as e:
+                print(f"❌ Failed to add event: {e}")
 
     changed_dates = sorted(added_dates.union(deleted_dates))
     if changed_dates:
@@ -896,7 +918,15 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
         print("✅ No calendar changes; no Discord notification.")
 
 def main_task():
-    print(f"\n🚀 Starting sync job at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
+    print(f"\n--- Synchronization Process Initiated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
+    
+    # Ensure logged in
+    try:
+        login_to_portal()
+    except Exception as e:
+        print(f"❌ Login failed: {e}")
+        return
+
     all_events = []
     for attempt in range(1, 4):
         print(f"🔄 Scrape Attempt {attempt}/3...")
@@ -939,32 +969,32 @@ def main_task():
 # Scheduler / Entry Point
 # --------------------------
 if __name__ == "__main__":
+    print(f"Lowe's Schedule Synchronization Service - {VERSION}")
     if RUN_MODE == "once":
         main_task()
-        print("👋 Run complete. Exiting.")
+        print("Synchronization completed successfully. Exiting.")
         driver.quit()
     else:
-        print(f"🕰️ Scheduled Mode Enabled: {RUN_MODE} {RUN_VALUE}")
+        print(f"Schedule synchronization active: {RUN_MODE} {RUN_VALUE}")
         
-        # Run once immediately on startup? Usually desirable.
         main_task()
 
         if RUN_MODE == "daily":
             # RUN_VALUE should be HH:MM
             schedule.every().day.at(RUN_VALUE).do(main_task)
-            print(f"📅 Next run scheduled for {RUN_VALUE}")
+            print(f"Next synchronization scheduled for {RUN_VALUE}")
         elif RUN_MODE == "interval":
             # RUN_VALUE is hours int
             try:
                 h = int(RUN_VALUE)
                 schedule.every(h).hours.do(main_task)
-                print(f"⏳ Runs every {h} hour(s).")
+                print(f"Service running on a {h}-hour interval.")
             except:
-                print("❌ Invalid interval value. Running once and exiting.")
+                print("❌ Configuration Error: Invalid interval value.")
                 driver.quit()
                 sys.exit(1)
         
-        print("🟢 Scheduler running... (Press Ctrl+C to stop)")
+        print("System initialized and monitoring...")
         try:
             while True:
                 schedule.run_pending()
