@@ -1,65 +1,70 @@
-# Lowe's Schedule Synchronization Service 🛠️
+```text
+     __                                 _____                    
+    / /   ____ _      _____  _____     / ___/ __  ______  _____  
+   / /   / __ \ | /| / / _ \/ ___/     \__ \ / / / / __ \/ ___/  
+  / /___/ /_/ / |/ |/ /  __(__  )     ___/ // /_/ / / / / /__    
+ /_____/\____/|__/|__/\___/____/     /____/ \__, /_/ /_/\___/    
+                                           /____/                
+```
 
-A professional, Dockerized synchronization service that securely scrapes your Lowe's schedule (Kronos) and maintains an up-to-date calendar in Google Calendar with smart diffing logic.
+# LoweSync: Schedule Synchronization Service
 
-## Key Enhancements (v3.3.0)
-- **Smart Synchronization**: Intelligent diffing mechanism only updates what has changed, reducing API calls and noise.
-- **Hardened Configuration**: Protection against accidental credential overwrites in Docker/Dockge.
-- **Professional Releases**: Automated GitHub Releases with compiled Windows binaries.
-- **Dynamic Timezone Support**: Respects system `TZ` environment variables for accurate local time reporting.
+A robust, enterprise-grade synchronization service designed to securely bridge Lowe's Kronos schedules with Google Calendar. This service features intelligent diffing logic, session-hardened authentication, and native Docker support for reliable long-term operation.
+
+## Key Features (v3.3.0)
+
+*   **Intelligent Synchronization**: Advanced diffing mechanism ensures only schedule changes are propagated to the calendar, minimizing API overhead.
+*   **Hardened Configuration**: Protection against accidental credential overwrites in headless environments.
+*   **Professional Deployment**: Automated GitHub Releases providing pre-built Windows binaries and optimized Docker images.
+*   **Timezone Resilience**: Native support for the `TZ` environment variable ensures temporal accuracy across global regions.
 
 ---
 
-## 🏗️ How to "Make a Build"
+## 🚀 Execution and Deployment
 
-### 🐳 Option 1: Docker (Recommended)
-This is the standard way to run the service. Building the "stack" ensures all dependencies (Chrome, Tesseract, etc.) are version-locked and isolated.
+### Option 1: Docker (Industry Standard)
+Recommended for server deployment and long-term stability.
 
-1.  **Open a Terminal** (PowerShell or CMD) in the project directory.
-2.  **Run the Build Command**:
-    ```powershell
+1.  **Build Phase**:
+    ```bash
     docker compose build
     ```
-3.  **Start the Service**:
-    ```powershell
+2.  **Deployment Phase**:
+    ```bash
     docker compose up -d
     ```
 
-### 📦 Option 2: Standalone Executable (Windows)
-If you want to run the bot as a normal `.exe` file without Docker:
+### Option 2: Standalone Binary (Windows)
+Optimized for local execution without external dependencies.
 
-1.  **Install PyInstaller**:
+1.  **Provision Dependencies**:
     ```powershell
-    pip install pyinstaller
+    pip install pyinstaller -r requirements.txt
     ```
-2.  **Build the Executable**:
+2.  **Compilation**:
     ```powershell
     pyinstaller lowes_schedule_bot.spec
     ```
-3.  **Find your Build**: The finished file will be in the `dist/` folder.
+3.  **Distribution**: The compiled executable is located within the `dist/` directory.
 
-### 📦 Option 3: Official GitHub Releases (Easiest for Windows)
-For a polished, professional experience:
-1.  Navigate to the **"Releases"** section on the right-hand side of this GitHub repository.
-2.  Download the latest version's **LoweSyncService.exe**.
-3.  Run the `.exe` directly on your Windows machine.
+### Option 3: Official GitHub Releases
+For immediate deployment in production environments:
+1.  Navigate to the **Releases** section of this repository.
+2.  Download the latest stable **LoweSyncService.exe**.
 
 ---
 
-## 🐳 Deployment on Linux (Dockge)
+## 📄 Server Configuration (Linux/Dockge)
 
-The "Lowe's Schedule Synchronization Service" is purpose-built for headless Linux servers running **Dockge**.
+LoweSync is optimized for headless Linux environments.
 
-### 1. Transfer Credentials
-Since the initial Google authorization requires a browser, it is easiest to generate your `token.json` on your Windows PC first and then move it to the server.
+### 1. Security Token Management
+Initial Google authorization requires a browser session. It is recommended to authorize locally and transfer the artifacts to the server.
 
-1.  Run the bot locally once to successful login.
-2.  Copy the contents of your local `data/` folder (specifically `token.json` and `credentials.json`).
-3.  In your Linux server's project directory (usually `/opt/stacks/bucket-bot/data`), create those same files.
+1.  Perform a successful local synchronization to generate `data/token.json`.
+2.  Transfer the `data/` directory contents to the server (e.g., `/opt/stacks/bucket-bot/data`).
 
-### 2. Dockge Stack Configuration
-Paste the following into your Dockge editor:
-
+### 2. Dockge Stack Specification
 ```yaml
 services:
   bucket-bot:
@@ -69,34 +74,31 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - LOWES_USERNAME=1234567  # Your Lowe's Sales ID
-      - LOWES_PASSWORD=Password # Your Lowe's Password
-      - LOWES_PIN=1111        # Your 4-Digit PIN
-      - RUN_MODE=daily        # "once", "daily", or "interval"
-      - RUN_VALUE=08:00       # Time (24h) or Hours Interval
-      - TZ=America/New_York   # Set your local timezone
+      - LOWES_USERNAME=1234567  # Employee Sales ID
+      - LOWES_PASSWORD=Password
+      - LOWES_PIN=1111 
+      - RUN_MODE=daily        # Options: "once", "daily", "interval"
+      - RUN_VALUE=08:00       # 24h Time or Hourly Interval
+      - TZ=America/New_York
     stdin_open: true
     tty: true
 ```
 
-### 3. Deploy
-Click **"Deploy"** in Dockge. The service will build, initialize its headless environment, and begin the synchronization schedule.
-
 ---
 
-## 🛠️ Maintenance Commands
+## 🛠️ System Administration
 
-### Monitor Logs
-```powershell
+### Log Monitoring
+```bash
 docker compose logs -f bucket-bot
 ```
 
-### Force an Immediate Synchronization
-```powershell
+### Manual Trigger
+```bash
 docker exec bucket-bot python lowes_schedule_bot.py --once
 ```
 
-### Reset System State
-```powershell
+### State Reset
+```bash
 docker compose run --rm bucket-bot --reset
 ```
