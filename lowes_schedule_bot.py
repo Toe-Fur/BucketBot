@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.2.0"
+VERSION = "v3.3.0"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -61,16 +61,21 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
 
-    # Helper: Check Environment first, then config file.
-    def get_val(key, default=None):
+    # Helper: Environment wins, then saved config, then prompt if interactive
+    def get_val(key, prompt_text, default=None):
         val = os.getenv(key) or config.get(key)
-        # In Docker or non-TTY, we never prompt.
-        return (val or default)
+        
+        if not val and sys.stdin.isatty():
+            print(f"📝 Setup Required: {prompt_text}")
+            val = input(f"{prompt_text}: ").strip()
+            if val: config[key] = val
+            
+        return val or default
 
-    username = get_val("LOWES_USERNAME")
-    password = get_val("LOWES_PASSWORD")
-    pin      = get_val("LOWES_PIN")
-    webhook  = get_val("LOWES_DISCORD_WEBHOOK", "")
+    username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID")
+    password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
+    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN")
+    webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook (optional)", default="")
     
     # Schedule Configuration
     run_mode = os.getenv("RUN_MODE") or config.get("RUN_MODE", "once")
@@ -80,19 +85,21 @@ def load_config():
     if run_mode == "daily" and not run_value: run_value = "08:00"
     if run_mode == "interval" and not run_value: run_value = "4"
 
-    # Persist back to config.json if needed
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({
-                "LOWES_USERNAME": username,
-                "LOWES_PASSWORD": password,
-                "LOWES_PIN": pin,
-                "LOWES_DISCORD_WEBHOOK": webhook,
-                "RUN_MODE": run_mode,
-                "RUN_VALUE": run_value
-            }, f, indent=2)
-    except:
-        pass
+    # CRITICAL: ONLY save to config if we actually have some data to save.
+    # This prevents Docker environments from accidentally clearing a valid config file.
+    if username and password:
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump({
+                    "LOWES_USERNAME": username,
+                    "LOWES_PASSWORD": password,
+                    "LOWES_PIN": pin,
+                    "LOWES_DISCORD_WEBHOOK": webhook,
+                    "RUN_MODE": run_mode,
+                    "RUN_VALUE": run_value
+                }, f, indent=2)
+        except: pass
+
 
     return username, password, pin, webhook, run_mode, run_value
 
@@ -264,34 +271,49 @@ def diagnostic_calendar_snapshot(tag="diag"):
 # Login → MyLowesLife → UKG (keeps your original flow)
 # --------------------------
 def login_to_portal():
-    print("🔑 Logging into Lowe's Portal...")
+    print("🔑 Authenticating with Lowe's Portal...")
     driver.get("https://www.myloweslife.com")
+    
+    # 1. Wait for Portal Load
     try:
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken2")))
     except Exception:
-        # Check if already authenticated
         if "Home" in driver.title or "MyLowesLife" in driver.page_source:
              print("✅ System: Session authenticated.")
              return True
-        debug_dump("login_timeout")
-        raise Exception("Timed out waiting for login page.")
+        debug_dump("login_portal_timeout")
+        raise Exception("Timed out waiting for initial login page.")
 
+    # 2. Enter Credentials
     try:
-        # Enter Credentials
+        print("   -> Entering credentials...")
         driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
         driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
-        driver.find_element(By.ID, "loginButton_0").click()
         
-        # PIN Transition
-        WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        # Use robust JS click fallback
+        login_btn = driver.find_element(By.ID, "loginButton_0")
+        try:
+            login_btn.click()
+        except:
+            js_click(login_btn)
         
-        # Enter PIN
+        # 3. Transition to PIN
+        print("   -> Authentication stage 1 submitted. Waiting for PIN prompt...")
+        WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "idToken2")))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        
+        # 4. Enter PIN
+        print("   -> Entering security PIN...")
         driver.find_element(By.ID, "idToken1").send_keys(PIN)
-        driver.find_element(By.ID, "loginButton_0").click()
+        
+        final_btn = driver.find_element(By.ID, "loginButton_0")
+        try:
+            final_btn.click()
+        except:
+            js_click(final_btn)
         
         time.sleep(3)
-        print("✅ Login successful.")
+        print("✅ System: Portal authentication successful.")
         return True
     except Exception as e:
         debug_dump("login_failure")
