@@ -32,16 +32,17 @@ Initial setup requires a "Desktop App" credential from the Google Cloud Console.
 2.  **Enable API**: 
     - Navigate to **APIs & Services** > **Library**.
     - Search for **"Google Calendar API"** and click **Enable**.
-3.  **Configure OAuth Consent Screen**:
-    - Go to **APIs & Services** > **OAuth consent screen**.
-    - If you see a **"GET STARTED"** or **"CONFIGURE APP"** button, click it.
-    - **Note**: If you don't see the "User Type" selection, ensure your project is selected in the top-left dropdown menu.
-    - Choose **User Type: External** and click **Create**.
-    - Fill in the required App Name (e.g., "LoweSync") and Support Email.
-    - **Important (The "Test User")**: In Step 3 of the setup, you will see a **"Test users"** section. Click **"+ ADD USERS"**, type your own Gmail address into the box, and click **ADD**. The bot will only be allowed to log into the account you list here. Click **Save and Continue** until finished.
-4.  **Create Credentials**:
-    - Go to **APIs & Services** > **Credentials**.
-    - Click **+ Create Credentials** > **OAuth client ID**.
+3.  **Configure Auth Platform (Consent Screen)**:
+    - Click **"Branding"** in the left sidebar.
+    - Fill in the **App Name** (e.g., "LoweSync") and **Support Email**.
+    - Scroll down and click **Save and Continue**.
+    - Click **"Audience"** in the left sidebar.
+    - Choose **User Type: External**.
+    - Under **"Test users"**, click **"+ ADD USERS"**.
+    - Type your **own Gmail address**, click **ADD**, then click **Save**.
+4.  **Create Credentials (client_secret)**:
+    - Click **"Clients"** in the left sidebar.
+    - Click **+ Create Client** > **OAuth client ID**.
     - Select **Application type: Desktop app**.
     - Name it "LoweSync Bot" and click **Create**.
 5.  **Download Key**:
