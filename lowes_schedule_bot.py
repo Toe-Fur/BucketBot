@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.2"
+VERSION = "v3.4.3"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -737,8 +737,8 @@ def run_scrape_cycle():
     # Combined Crawl Strategy: Grid → Aside Fallback per page
     found_events = []
     
-    # Walk through up to 6 pages (covers ~1.5 - 2 months depending on view)
-    for i in range(1, 7):
+    # Walk through up to 3 pages (covers Current, Next, and Next-Next months/periods)
+    for i in range(1, 4):
         page_tag = f"p{i}"
         dprint(f"--- Crawling Page {i} ---")
         
@@ -762,7 +762,7 @@ def run_scrape_cycle():
                 print(f"⚠️ Page {i}: Both parsers found 0 events.")
         
         # 3. Move to next page
-        if i < 6: # don't click next on the very last allowed page
+        if i < 3: # don't click next on the last allowed page
             if click_next_and_wait_change():
                 dprint(f"Successfully navigated to page {i+1}")
                 time.sleep(1.0) # wait for render
