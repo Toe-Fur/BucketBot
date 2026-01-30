@@ -38,7 +38,7 @@ Initial setup requires a "Desktop App" credential from the Google Cloud Console.
     - **Note**: If you don't see the "User Type" selection, ensure your project is selected in the top-left dropdown menu.
     - Choose **User Type: External** and click **Create**.
     - Fill in the required App Name (e.g., "LoweSync") and Support Email.
-    - **Important**: In the **"Test users"** section (Step 3 of the setup), add your own Gmail address. The bot will NOT work without this.
+    - **Important (The "Test User")**: In Step 3 of the setup, you will see a **"Test users"** section. Click **"+ ADD USERS"**, type your own Gmail address into the box, and click **ADD**. The bot will only be allowed to log into the account you list here. Click **Save and Continue** until finished.
 4.  **Create Credentials**:
     - Go to **APIs & Services** > **Credentials**.
     - Click **+ Create Credentials** > **OAuth client ID**.
