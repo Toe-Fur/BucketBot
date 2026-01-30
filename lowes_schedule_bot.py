@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.7"
+VERSION = "v3.1.8"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -293,34 +293,64 @@ def diagnostic_calendar_snapshot(tag="diag"):
 # Login → MyLowesLife → UKG (keeps your original flow)
 # --------------------------
 def login_to_portal():
-    print("🔑 Authenticating with Lowe's Portal...")
-    driver.get("https://www.myloweslife.com")
+    print("🔑 Initiating fresh authentication session...")
+    
+    # Ensure a clean slate for the browser session
     try:
-        # Increase timeout to 15s for the initial heavy portal load in Docker
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
-    except Exception:
-        # Diagnostic dump on failure
-        debug_dump("login_initial_timeout")
-        if "Home" in driver.title or "MyLowesLife" in driver.page_source:
-             print("✅ Already authenticated.")
-             return True
-        print("❌ Portal load timeout: Password field not detected.")
-        raise
+        driver.delete_all_cookies()
+        driver.switch_to.default_content()
+    except:
+        pass
 
+    driver.get("https://www.myloweslife.com")
+    
+    # 1. Wait for Initial Portal Load
     try:
-        driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
-        driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken2")))
+        print("   -> Portal landing page loaded.")
+    except Exception:
+        debug_dump("login_portal_timeout")
+        # Check if already in
+        if "Home" in driver.title or "MyLowesLife" in driver.page_source:
+             print("✅ System: Session already authenticated.")
+             return True
+        raise Exception("Timed out waiting for initial login page.")
+
+    # 2. Enter Credentials
+    try:
+        print("   -> Entering Sales ID and Password...")
+        user_field = driver.find_element(By.ID, "idToken1")
+        pass_field = driver.find_element(By.ID, "idToken2")
+        submit_btn = driver.find_element(By.ID, "loginButton_0")
+        
+        user_field.clear()
+        user_field.send_keys(USERNAME)
+        pass_field.clear()
+        pass_field.send_keys(PASSWORD)
+        
+        WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "loginButton_0")))
+        submit_btn.click()
+        
+        # 3. Wait for Transition to PIN Page
+        print("   -> Authentication stage 1 submitted. Waiting for PIN prompt...")
+        WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "idToken2")))
+        
+        # 4. Enter PIN
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        print("   -> Entering Security PIN...")
+        pin_field = driver.find_element(By.ID, "idToken1")
+        pin_field.send_keys(PIN)
+        
         driver.find_element(By.ID, "loginButton_0").click()
         
-        WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
-        driver.find_element(By.ID, "idToken1").send_keys(PIN)
-        driver.find_element(By.ID, "loginButton_0").click()
-        print("✅ Portal authentication successful.")
+        # Short settle to ensure redirect starts
+        time.sleep(2)
+        print("✅ System: Portal authentication successful.")
         return True
+        
     except Exception as e:
-        debug_dump("login_entry_failed")
-        raise Exception(f"Failed during credential entry: {str(e)}")
+        debug_dump("login_workflow_failed")
+        raise Exception(f"Authentication workflow interrupted: {str(e)}")
 
 # Utility to open the UKG tile if needed (kept for fallback)
 def open_ukg_tile():
@@ -1003,13 +1033,21 @@ if __name__ == "__main__":
                 sys.exit(1)
         
         print("System monitoring active. Waiting for scheduled tasks...")
+        
+        last_heartbeat = time.time()
         try:
             while True:
                 schedule.run_pending()
-                time.sleep(30)
+                
+                # Heartbeat every 10 minutes to verify process health in logs
+                if time.time() - last_heartbeat > 600:
+                    print(f"💓 Service Heartbeat: System active at {datetime.now().strftime('%H:%M:%S')}")
+                    last_heartbeat = time.time()
+                    
+                time.sleep(10)
         except Exception as e:
-            print(f"❌ Scheduler loop error: {e}")
+            print(f"❌ Critical error in scheduler loop: {e}", flush=True)
             traceback.print_exc()
         finally:
-            print("🔻 Service is shutting down.")
+            print("🔻 Service is terminating.", flush=True)
             driver.quit()
