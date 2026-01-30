@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.5"
+VERSION = "v3.1.6"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -74,8 +74,8 @@ def load_config():
         if val:
             return val.strip()
 
-        # 3. Prompt if interactive
-        if sys.stdin.isatty():
+        # 3. Prompt if strictly required (no default) and interactive
+        if default is None and sys.stdin.isatty():
             print(f"📝 Setup Required: {prompt_text}")
             val = input(f"{prompt_text}: ").strip()
             if val:
