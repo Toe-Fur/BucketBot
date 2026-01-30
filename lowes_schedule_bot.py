@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.3"
+VERSION = "v3.4.4"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -458,10 +458,13 @@ def parse_fullcalendar_period(view_html):
         seen.add(key)
         events.append((start_dt, end_dt, "Lowe's 🛠️"))
 
+    # Helpers
     def parse_dt(date_iso, time_str):
         for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %I:%M%p"):
             try:
-                return datetime.strptime(f"{date_iso} {time_str}", fmt)
+                dt = datetime.strptime(f"{date_iso} {time_str}", fmt)
+                # Localize to User's TZ immediately
+                return arrow.get(dt, TZ)
             except:
                 continue
         return None
@@ -701,10 +704,14 @@ def scrape_shifts_from_aside(max_clicks=None):
                 start_s = m.group(1).lower()
                 end_s   = m.group(2).lower()
                 try:
-                    sdt = datetime.strptime(f"{date_iso} {start_s}", "%Y-%m-%d %I:%M %p")
-                    edt = datetime.strptime(f"{date_iso} {end_s}",   "%Y-%m-%d %I:%M %p")
+                    sdt_naive = datetime.strptime(f"{date_iso} {start_s}", "%Y-%m-%d %I:%M %p")
+                    edt_naive = datetime.strptime(f"{date_iso} {end_s}",   "%Y-%m-%d %I:%M %p")
+                    
+                    sdt = arrow.get(sdt_naive, TZ)
+                    edt = arrow.get(edt_naive, TZ)
+                    
                     if edt <= sdt:
-                        edt += timedelta(days=1)
+                        edt = edt.shift(days=1)
                     found.append((sdt, edt, "Lowe's 🛠️"))
                 except:
                     continue
@@ -884,11 +891,13 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
     if not service:
         return
 
-    now = datetime.utcnow()
-    # MODIFIED: User requested "delete all before rewriting".
-    # We expand the window back to cover history (45 days) so we can clean up duplicates.
-    time_min = (now - timedelta(days=45)).isoformat() + "Z"
-    time_max = (now + timedelta(days=90)).isoformat() + "Z"
+    # Dynamic Sync Window: 
+    # To avoid deleting history we didn't scrape, we only sync from the earliest parsed shift.
+    # We add a 24-hour buffer to catch immediate schedule changes.
+    earliest_parsed = min(ev.begin for ev in cal.events)
+    time_min = earliest_parsed.shift(hours=-24).isoformat()
+    # Looking forward 90 days is safe.
+    time_max = earliest_parsed.shift(days=90).isoformat()
 
     all_events_g = service.events().list(
         calendarId=calendar_id,
@@ -908,19 +917,20 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
 
     g_map = {}
     for e in lowes_events:
-        s = e["start"].get("dateTime")
-        en = e["end"].get("dateTime")
-        if s and en:
-            # Normalize strings for comparison
-            s = s[:19] # YYYY-MM-DDTHH:mm:ss
-            en = en[:19]
-            g_map[(s, en)] = e["id"]
+        st = e["start"].get("dateTime") or e["start"].get("date")
+        et = e["end"].get("dateTime") or e["end"].get("date")
+        if st and et:
+            # Shift to UTC for robust comparison
+            s_utc = arrow.get(st).to('UTC').format("YYYY-MM-DDTHH:mm:ss")
+            e_utc = arrow.get(et).to('UTC').format("YYYY-MM-DDTHH:mm:ss")
+            g_map[(s_utc, e_utc)] = e["id"]
 
     p_map = {}
     for ev in cal.events:
-        s = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
-        en = ev.end.format("YYYY-MM-DDTHH:mm:ss")
-        p_map[(s, en)] = ev
+        # ev.begin/end are already localized arrow objects
+        s_utc = ev.begin.to('UTC').format("YYYY-MM-DDTHH:mm:ss")
+        e_utc = ev.end.to('UTC').format("YYYY-MM-DDTHH:mm:ss")
+        p_map[(s_utc, e_utc)] = ev
 
     deleted_dates = set()
     for (s, en), eid in g_map.items():
@@ -933,16 +943,20 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
                 print(f"❌ Failed to delete: {e}")
 
     added_dates = set()
-    for (s, en), ev in p_map.items():
-        if (s, en) not in g_map:
+    for (s_utc, e_utc), ev in p_map.items():
+        if (s_utc, e_utc) not in g_map:
             try:
+                # Convert back to local for the actual insert
+                s_local = ev.begin.format("YYYY-MM-DDTHH:mm:ss")
+                e_local = ev.end.format("YYYY-MM-DDTHH:mm:ss")
+                
                 service.events().insert(calendarId=calendar_id, body={
                     "summary": ev.name,
-                    "start": {"dateTime": s, "timeZone": TZ},
-                    "end":   {"dateTime": en,  "timeZone": TZ},
+                    "start": {"dateTime": s_local, "timeZone": TZ},
+                    "end":   {"dateTime": e_local, "timeZone": TZ},
                 }).execute()
-                added_dates.add(s[:10])
-                print(f"✅ Added new shift on {s[:10]} {s[11:]}–{en[11:]}")
+                added_dates.add(s_local[:10])
+                print(f"✅ Added new shift on {s_local[:10]} {s_local[11:]}–{e_local[11:]}")
             except Exception as e:
                 print(f"❌ Failed to add event: {e}")
 
