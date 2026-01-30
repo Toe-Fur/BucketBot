@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.1"
+VERSION = "v3.4.2"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -734,35 +734,46 @@ def run_scrape_cycle():
 
     diagnostic_calendar_snapshot("before_save")
     time.sleep(0.9)
-    html1 = save_view("my_schedule")
-
-    html2 = ""
-    if click_next_and_wait_change():
-        html2 = save_view("my_schedule_next")
-    else:
-        print("⚠️ Next button not found or period did not change.")
-
-    # Parse
+    # Combined Crawl Strategy: Grid → Aside Fallback per page
     found_events = []
-    e1 = parse_fullcalendar_period(html1)
-    dprint(f"🧩 Current period found {len(e1)} event(s).")
-    found_events.extend(e1)
-
-    if html2:
-        e2 = parse_fullcalendar_period(html2)
-        dprint(f"🧩 Next period found {len(e2)} event(s).")
-        found_events.extend(e2)
     
-    # Fallback
-    if not found_events:
-        fallback = scrape_shifts_from_aside(max_clicks=50)
-        if fallback:
-            found_events.extend(fallback)
-            dprint(f"🧩 Found {len(fallback)} event(s) from aside scraping.")
+    # Walk through up to 6 pages (covers ~1.5 - 2 months depending on view)
+    for i in range(1, 7):
+        page_tag = f"p{i}"
+        dprint(f"--- Crawling Page {i} ---")
+        
+        # 1. Capture HTML for grid parsing
+        current_html = save_view(f"my_schedule_{page_tag}")
+        
+        # 2. Try Grid Parsing
+        grid_events = parse_fullcalendar_period(current_html)
+        if grid_events:
+            print(f"🧩 Page {i}: Found {len(grid_events)} event(s) via Grid parser.")
+            found_events.extend(grid_events)
+        else:
+            print(f"⚠️ Page {i}: Grid parser found 0 events. Attempting Aside Crawler...")
+            # If grid fails (List view or rendering delay), try the robust aside crawler
+            # This only scrapes the days visible in the current view
+            aside_events = scrape_shifts_from_aside()
+            if aside_events:
+                print(f"🧩 Page {i}: Found {len(aside_events)} event(s) via Aside Crawler.")
+                found_events.extend(aside_events)
+            else:
+                print(f"⚠️ Page {i}: Both parsers found 0 events.")
+        
+        # 3. Move to next page
+        if i < 6: # don't click next on the very last allowed page
+            if click_next_and_wait_change():
+                dprint(f"Successfully navigated to page {i+1}")
+                time.sleep(1.0) # wait for render
+            else:
+                dprint(f"Pagination stop: Next button not found or view did not change at page {i}.")
+                break
     
-    # De-dupe
-    found_events = sorted(set(found_events), key=lambda x: (x[0], x[1]))
-    return found_events
+    # De-dupe and Sort
+    # events are tuples: (start_dt, end_dt, label)
+    final_events = sorted(set(found_events), key=lambda x: (x[0], x[1]))
+    return final_events
 
 # --------------------------
 # Google Calendar sync
