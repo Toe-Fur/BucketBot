@@ -24,7 +24,7 @@ A robust, enterprise-grade synchronization service designed to securely bridge L
 
 ---
 
-## 🔑 Google Calendar API Setup
+## Google Calendar API Setup
 
 Initial setup requires a "Desktop App" credential from the Google Cloud Console.
 
@@ -52,9 +52,9 @@ Initial setup requires a "Desktop App" credential from the Google Cloud Console.
 
 ---
 
-## 🚀 Execution and Deployment
+## Execution and Deployment
 
-### Option 1: Docker (Industry Standard)
+### Option 1: Docker
 Recommended for server deployment and long-term stability.
 
 1.  **Build Phase**:
@@ -86,7 +86,7 @@ For immediate deployment in production environments:
 
 ---
 
-## 📄 Server Configuration (Linux/Dockge)
+## Server Configuration (Linux/Dockge)
 
 LoweSync is optimized for headless Linux environments.
 
@@ -119,7 +119,7 @@ services:
 
 ---
 
-## 🛠️ System Administration
+## System Administration
 
 ### Log Monitoring
 ```bash
