@@ -1,64 +1,81 @@
-# Lowe's Schedule Bot 🛠️
+# Lowe's Schedule Synchronization Service 🛠️
 
-A Dockerized Python bot that scrapes your Lowe's schedule (Kronos) and syncs it to Google Calendar.
+A professional, Dockerized synchronization service that securely scrapes your Lowe's schedule (Kronos) and maintains an up-to-date calendar in Google Calendar with smart diffing logic.
 
-## Features
-- **Auto-Sync**: Scrapes your schedule and updates Google Calendar.
-- **Diff Logic**: Deletes old shifts and adds new ones (prevents duplicates).
-- **Resilient**: Retries automatically if the page fails to load.
-- **Secure**: Interactive setup helper for Lowe's and Google credentials.
-- **Schedule Mode**: Can run once, daily, or on a recurring interval.
+## Key Enhancements (v3.1.0)
+- **Smart Synchronization**: Intelligent diffing mechanism only updates what has changed, reducing API calls and noise.
+- **Session Persistence**: Authentication is handled per-task, ensuring the service remains logged in during long-term operation.
+- **Professional Logging**: Formalized system output for clear monitoring and audits.
+- **Dynamic Timezone Support**: Respects system `TZ` environment variables for accurate local time reporting.
 
-## Deployment (Docker / Dockge)
+---
 
-### 🚀 Recommended Setup (Headless Server)
-The most reliable way to set up the bot on a remote server (like Dockge/Portainer) is to upload your credentials via SFTP.
+## 🏗️ How to "Make a Build"
 
-1.  **Prepare Files on your PC**: Run the bot once locally to generate `data/credentials.json` and `data/token.json`.
-2.  **Upload via SFTP**: 
-    - Create the folder `/opt/stacks/bucket-bot/data/` on your server.
-    - Upload your `token.json` and `credentials.json` into that `data` folder.
-3.  **Fix Permissions**: Run this on your server terminal so Docker can read the files:
-    ```bash
-    sudo chown -R $USER: /opt/stacks/bucket-bot
-    sudo chmod -R 775 /opt/stacks/bucket-bot
+### 🐳 Option 1: Docker (Recommended)
+This is the standard way to run the service. Building the "stack" ensures all dependencies (Chrome, Tesseract, etc.) are version-locked and isolated.
+
+1.  **Open a Terminal** (PowerShell or CMD) in the project directory.
+2.  **Run the Build Command**:
+    ```powershell
+    docker-compose build
     ```
-4.  **Dockge / Compose Config**:
+3.  **Start the Service**:
+    ```powershell
+    docker-compose up -d
+    ```
+
+### 📦 Option 2: Standalone Executable (Windows)
+If you want to run the bot as a normal `.exe` file without Docker:
+
+1.  **Install PyInstaller**:
+    ```powershell
+    pip install pyinstaller
+    ```
+2.  **Build the Executable**:
+    ```powershell
+    pyinstaller lowes_schedule_bot.spec
+    ```
+3.  **Find your Build**: The finished file will be in the `dist/` folder.
+
+---
+
+## 🚀 Deployment (Docker / Dockge)
+
+The most reliable way to set up the service on a remote server is using the provided `docker-compose.yml`.
+
+1.  **Initialize locally**: Run the service once to generate your `data/token.json`.
+2.  **Deploy**:
     ```yaml
     services:
       bucket-bot:
-        build: https://github.com/Toe-Fur/BucketBot.git#main
+        build: .
         container_name: bucket-bot
         restart: unless-stopped
         volumes:
           - ./data:/app/data
         environment:
-          - LOWES_USERNAME=5001234
-          - LOWES_PASSWORD=YourPassword!
+          - LOWES_USERNAME=YourSalesID
+          - LOWES_PASSWORD=YourPassword
           - LOWES_PIN=1234
           - RUN_MODE=daily
           - RUN_VALUE=08:00
-          # - LOWES_DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+          - TZ=America/New_York
     ```
 
-### 🛠️ Alternative: Environment Variables
-If you don't want to use SFTP, you can inject everything via `compose.yaml`. **Note**: This can be tricky with JSON quoting.
+## 🛠️ Maintenance Commands
 
-```yaml
-      - GOOGLE_CLIENT_ID="your-id.apps.googleusercontent.com"
-      - GOOGLE_CLIENT_SECRET="your-secret"
-      - GOOGLE_TOKEN_JSON='{"token": "ya29...", "refresh_token": "...", ...}'
+### Monitor Logs
+```powershell
+docker-compose logs -f bucket-bot
 ```
 
-## CLI Commands
-
-### Force an Immediate Run
-In your server terminal:
-```bash
+### Force an Immediate Synchronization
+```powershell
 docker exec bucket-bot python lowes_schedule_bot.py --once
 ```
 
-### Reset All Data
-```bash
-docker compose run --rm bucket-bot --reset
+### Reset System State
+```powershell
+docker-compose run --rm bucket-bot --reset
 ```
