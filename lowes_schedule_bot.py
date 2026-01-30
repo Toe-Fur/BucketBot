@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.9"
+VERSION = "v3.1.10"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -227,6 +227,9 @@ def switch_to_new_window(old_handles, timeout=10):
 # --------------------------
 # Save view + Diagnostics
 # --------------------------
+def debug_dump(tag):
+    return save_view(f"debug_{tag}")
+
 def save_view(tag_prefix="my_schedule"):
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     html = driver.page_source
@@ -319,7 +322,7 @@ def login_to_portal():
     # 2. Enter Credentials
     try:
         print("   -> Entering Sales ID and Password...")
-        user_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        user_field = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
         pass_field = driver.find_element(By.ID, "idToken2")
         submit_btn = driver.find_element(By.ID, "loginButton_0")
         
@@ -328,40 +331,45 @@ def login_to_portal():
         pass_field.clear()
         pass_field.send_keys(PASSWORD)
         
-        # Robust click: try JS, then Normal, with ENTER fallback
+        # 3. Submission Protocol (Multi-method)
         print("   -> Submitting credentials...")
-        try:
-            js_click(submit_btn)
-        except:
-            try: submit_btn.click()
-            except: pass_field.send_keys(Keys.ENTER)
         
-        # 3. Wait for Transition to PIN Page
-        print("   -> Authentication stage 1 submitted. Waiting for PIN prompt...")
+        # We try to submit and wait for idToken2 to disappear
+        # If it doesn't disappear in 5s, we try the next method
+        submission_methods = [
+            lambda: submit_btn.click(),
+            lambda: js_click(submit_btn),
+            lambda: pass_field.send_keys(Keys.ENTER)
+        ]
         
-        # Robust wait: check for PIN field (idToken1) OR Error Message
-        end_wait = time.time() + 30
-        while time.time() < end_wait:
-            # Check for error message
-            src = driver.page_source.lower()
-            if "invalid login" in src or "authentication failed" in src or "incorrect" in src:
-                debug_dump("login_error_message")
-                raise Exception("Lowe's reported an invalid login/password. Please check your credentials.")
-            
-            # Check if we moved to PIN stage (idToken2 is gone AND idToken1 is present)
+        authenticated_stage_1 = False
+        for method in submission_methods:
             try:
-                # In PIN stage, idToken2 (password) is removed from DOM or hidden
-                if len(driver.find_elements(By.ID, "idToken2")) == 0:
-                    if len(driver.find_elements(By.ID, "idToken1")) > 0:
-                        break # Success
-            except: pass
-            time.sleep(1)
-        else:
-            raise Exception("Timed out waiting for PIN prompt after login submission.")
+                method()
+                print(f"      - Submission method {submission_methods.index(method)+1} attempted.")
+                # Wait for transition (either idToken2 gone OR error message appears)
+                for _ in range(8): # 4 seconds total per method
+                    src = driver.page_source.lower()
+                    if "invalid login" in src or "authentication failed" in src or "incorrect" in src:
+                        debug_dump("login_error_detected")
+                        raise Exception("Lowe's reported an invalid login/password.")
+                    
+                    if len(driver.find_elements(By.ID, "idToken2")) == 0:
+                        authenticated_stage_1 = True
+                        break
+                    time.sleep(0.5)
+                if authenticated_stage_1: break
+            except Exception as e:
+                if "invalid login" in str(e).lower(): raise
+                print(f"      ! Method failed or no transition: {e}")
         
+        if not authenticated_stage_1:
+             debug_dump("login_submission_hang")
+             raise Exception("Failed to advance past credentials page (Timed out).")
+
         # 4. Enter PIN
-        print("   -> Entering Security PIN...")
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        print("   -> Authentication stage 1 successful. Entering PIN...")
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
         pin_field = driver.find_element(By.ID, "idToken1")
         pin_field.clear()
         pin_field.send_keys(PIN)
@@ -371,8 +379,8 @@ def login_to_portal():
         try: js_click(pin_btn)
         except: pin_btn.click()
         
-        # Short settle to ensure redirect starts
-        time.sleep(2)
+        # Final validation of login
+        time.sleep(3)
         print("✅ System: Portal authentication successful.")
         return True
         
