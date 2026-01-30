@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.0"
+VERSION = "v3.4.1"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -63,20 +63,21 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
 
-    # Helper: Environment wins, then saved config, then prompt if interactive
-    def get_val(key, prompt_text, default=None):
+    # Helper: Environment wins, then saved config, then prompt if interactive & required
+    def get_val(key, prompt_text, default=None, required=False):
         val = os.getenv(key) or config.get(key)
         
-        if not val and sys.stdin.isatty():
+        # Only prompt if missing, interactive, and either no default or explicitly required
+        if not val and sys.stdin.isatty() and (default is None or required):
             print(f"📝 Setup Required: {prompt_text}")
             val = input(f"{prompt_text}: ").strip()
             if val: config[key] = val
             
         return val or default
 
-    username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID")
-    password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
-    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN")
+    username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID", required=True)
+    password = get_val("LOWES_PASSWORD", "Enter Lowe's Password", required=True)
+    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN", required=True)
     webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook (optional)", default="")
     retention_days = int(get_val("LOG_RETENTION_DAYS", "Enter Log Retention Days", default="7"))
     
