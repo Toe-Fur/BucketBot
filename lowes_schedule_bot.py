@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.5"
+VERSION = "v3.4.6"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -446,17 +446,19 @@ def parse_fullcalendar_period(view_html):
     events = []
     seen = set()
 
-    def add_event_if_new(start_dt, end_dt):
+    def add_event_if_new(start_dt, end_dt, source_text=None):
         # normalize to minute resolution and dedupe
         start_dt = start_dt.replace(second=0, microsecond=0)
         end_dt   = end_dt.replace(second=0, microsecond=0)
         if end_dt <= start_dt:
-            end_dt += timedelta(days=1)
+            end_dt = end_dt.shift(days=1)
         key = (start_dt.isoformat(), end_dt.isoformat())
         if key in seen:
             return
         seen.add(key)
         events.append((start_dt, end_dt, "Lowe's 🛠️"))
+        if source_text:
+            print(f"   🔍 Identified: {source_text} -> {start_dt.format('HH:mm')} to {end_dt.format('HH:mm')}")
 
     # Helpers
     def parse_dt(date_iso, time_str):
@@ -566,7 +568,7 @@ def parse_fullcalendar_period(view_html):
                             s,e = m.group(1).lower(), m.group(2).lower()
                             sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
                             if sdt and edt:
-                                add_event_if_new(sdt, edt)
+                                add_event_if_new(sdt, edt, source_text=f"Grid table cell ({date_iso})")
                     # fallback: generic search inside TD cell text
                     if not time_nodes:
                         txt = td.get_text(" ", strip=True)
@@ -574,7 +576,7 @@ def parse_fullcalendar_period(view_html):
                             s,e = m.group(1).lower(), m.group(2).lower()
                             sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
                             if sdt and edt:
-                                add_event_if_new(sdt, edt)
+                                add_event_if_new(sdt, edt, source_text=f"Grid table fallback ({date_iso})")
             if events:
                 dprint("parse: used table-based strategy (DOM header map)")
                 return events
@@ -602,7 +604,7 @@ def parse_fullcalendar_period(view_html):
                         s,e = m.group(1).lower(), m.group(2).lower()
                         sdt = parse_dt(date_iso, s); edt = parse_dt(date_iso, e)
                         if sdt and edt:
-                            add_event_if_new(sdt, edt)
+                            add_event_if_new(sdt, edt, source_text=f"DayGrid div ({date_iso})")
             if events:
                 dprint("parse: used div-based daygrid strategy")
                 return events
@@ -645,7 +647,7 @@ def parse_fullcalendar_period(view_html):
                     s,e = m.group(1).lower(), m.group(2).lower()
                     sdt = parse_dt(candidate_date, s); edt = parse_dt(candidate_date, e)
                     if sdt and edt:
-                        add_event_if_new(sdt, edt)
+                        add_event_if_new(sdt, edt, source_text=f"Brute-force scan ({candidate_date})")
 
         if events:
             if not any(strategy in dprint.last_msg for strategy in ["table", "div", "generic"]):
