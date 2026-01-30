@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.7"
+VERSION = "v3.4.8"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -681,6 +681,12 @@ def scrape_shifts_from_aside(max_clicks=None):
         date_iso = td.get_attribute("data-date")
         if not date_iso:
             continue
+        
+        # Scavenger Guard: Don't keep going if we've already found a crazy amount
+        if len(found) > 50:
+            print(f"⚠️ Scavenger Guard: Found {len(found)} shifts in aside. Potential sidebar noise detected. Truncating.")
+            break
+
         clicks += 1
         try:
             # click the day number if present, else the cell
@@ -689,15 +695,13 @@ def scrape_shifts_from_aside(max_clicks=None):
                 js_click(daynum)
             except:
                 js_click(td)
-            # wait briefly for panel to fill
+            
+            # Short wait for panel
+            time.sleep(0.5)
+
             panel_text = ""
-            try:
-                WebDriverWait(driver, 3).until(
-                    lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in (".employee-view-aside", ".aside", ".krn-list", ".panel-aside", ".side-panel", "aside"))
-                )
-            except:
-                pass
-            for sel in (".employee-view-aside", ".aside", ".krn-list", ".panel-aside", ".side-panel", "aside", ".shift-detail", ".shift-info"):
+            # HARDENED SELECTORS: Avoid broad '.aside' or 'aside' which might contain other people
+            for sel in (".shift-detail", ".shift-info", ".employee-view-aside", ".krn-list"):
                 try:
                     el = driver.find_element(By.CSS_SELECTOR, sel)
                     panel_text = (el.get_attribute("innerText") or "")
@@ -705,15 +709,14 @@ def scrape_shifts_from_aside(max_clicks=None):
                         break
                 except:
                     panel_text = ""
-            if not panel_text:
-                try:
-                    right_col = driver.find_element(By.CSS_SELECTOR, ".right-column, .right-pane, .krn-panel, .panel-right")
-                    panel_text = (right_col.get_attribute("innerText") or "")
-                except:
-                    panel_text = ""
+            
             if not panel_text:
                 continue
+
+            # Limit shifts per day to 3 (Lunch, Shift, etc - usually just 1 or 2)
+            day_count = 0 
             for m in TIME_RANGE_RX.finditer(panel_text):
+                if day_count >= 3: break 
                 start_s = m.group(1).lower()
                 end_s   = m.group(2).lower()
                 try:
@@ -726,6 +729,7 @@ def scrape_shifts_from_aside(max_clicks=None):
                     if edt <= sdt:
                         edt = edt.shift(days=1)
                     found.append((sdt, edt, "Lowe's 🛠️"))
+                    day_count += 1
                 except:
                     continue
         except Exception:
@@ -793,6 +797,12 @@ def run_scrape_cycle():
     # De-dupe and Sort
     # events are tuples: (start_dt, end_dt, label)
     final_events = sorted(set(found_events), key=lambda x: (x[0], x[1]))
+
+    # Global Sanity Check
+    if len(final_events) > 100:
+        print(f"⚠️ Global Scavenger Alert: Found {len(final_events)} shifts. This exceeds normal employee schedules. Truncating to 100.")
+        final_events = final_events[:100]
+
     return final_events
 
 # --------------------------
