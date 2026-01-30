@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.10"
+VERSION = "v3.1.11"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -296,97 +296,40 @@ def diagnostic_calendar_snapshot(tag="diag"):
 # Login → MyLowesLife → UKG (keeps your original flow)
 # --------------------------
 def login_to_portal():
-    print("🔑 Initiating fresh authentication session...")
-    
-    # Ensure a clean slate for the browser session
-    try:
-        driver.delete_all_cookies()
-        driver.switch_to.default_content()
-    except:
-        pass
-
+    print("🔑 Logging into Lowe's Portal...")
     driver.get("https://www.myloweslife.com")
-    
-    # 1. Wait for Initial Portal Load
     try:
+        # Initial wait for the portal password field
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken2")))
-        print("   -> Portal landing page loaded.")
     except Exception:
-        debug_dump("login_portal_timeout")
-        # Check if already in
+        # If we are already logged in (check title or source)
         if "Home" in driver.title or "MyLowesLife" in driver.page_source:
-             print("✅ System: Session already authenticated.")
+             print("✅ Already authenticated.")
              return True
-        raise Exception("Timed out waiting for initial login page.")
+        debug_dump("login_initial_timeout")
+        raise Exception("Portal load timeout: Password field not detected.")
 
-    # 2. Enter Credentials
     try:
-        print("   -> Entering Sales ID and Password...")
-        user_field = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
-        pass_field = driver.find_element(By.ID, "idToken2")
-        submit_btn = driver.find_element(By.ID, "loginButton_0")
+        # Stage 1: ID and Password
+        driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
+        driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
+        driver.find_element(By.ID, "loginButton_0").click()
         
-        user_field.clear()
-        user_field.send_keys(USERNAME)
-        pass_field.clear()
-        pass_field.send_keys(PASSWORD)
-        
-        # 3. Submission Protocol (Multi-method)
-        print("   -> Submitting credentials...")
-        
-        # We try to submit and wait for idToken2 to disappear
-        # If it doesn't disappear in 5s, we try the next method
-        submission_methods = [
-            lambda: submit_btn.click(),
-            lambda: js_click(submit_btn),
-            lambda: pass_field.send_keys(Keys.ENTER)
-        ]
-        
-        authenticated_stage_1 = False
-        for method in submission_methods:
-            try:
-                method()
-                print(f"      - Submission method {submission_methods.index(method)+1} attempted.")
-                # Wait for transition (either idToken2 gone OR error message appears)
-                for _ in range(8): # 4 seconds total per method
-                    src = driver.page_source.lower()
-                    if "invalid login" in src or "authentication failed" in src or "incorrect" in src:
-                        debug_dump("login_error_detected")
-                        raise Exception("Lowe's reported an invalid login/password.")
-                    
-                    if len(driver.find_elements(By.ID, "idToken2")) == 0:
-                        authenticated_stage_1 = True
-                        break
-                    time.sleep(0.5)
-                if authenticated_stage_1: break
-            except Exception as e:
-                if "invalid login" in str(e).lower(): raise
-                print(f"      ! Method failed or no transition: {e}")
-        
-        if not authenticated_stage_1:
-             debug_dump("login_submission_hang")
-             raise Exception("Failed to advance past credentials page (Timed out).")
-
-        # 4. Enter PIN
-        print("   -> Authentication stage 1 successful. Entering PIN...")
+        # Wait for ID/Pass to vanish and PIN prompt to appear
+        WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "idToken2")))
         WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
-        pin_field = driver.find_element(By.ID, "idToken1")
-        pin_field.clear()
-        pin_field.send_keys(PIN)
         
-        # PIN Submission
-        pin_btn = driver.find_element(By.ID, "loginButton_0")
-        try: js_click(pin_btn)
-        except: pin_btn.click()
+        # Stage 2: Security PIN
+        driver.find_element(By.ID, "idToken1").send_keys(PIN)
+        driver.find_element(By.ID, "loginButton_0").click()
         
-        # Final validation of login
+        # Verification settle
         time.sleep(3)
-        print("✅ System: Portal authentication successful.")
+        print("✅ Login successful.")
         return True
-        
     except Exception as e:
-        debug_dump("login_workflow_failed")
-        raise Exception(f"Authentication workflow interrupted: {str(e)}")
+        debug_dump("login_failure")
+        raise Exception(f"Login failed: {str(e)}")
 
 # Utility to open the UKG tile if needed (kept for fallback)
 def open_ukg_tile():
