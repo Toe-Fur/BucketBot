@@ -38,6 +38,13 @@ If you want to run the bot as a normal `.exe` file without Docker:
     ```
 3.  **Find your Build**: The finished file will be in the `dist/` folder.
 
+### 📦 Option 3: GitHub Actions (Automated)
+Every time you push code to GitHub, the service is automatically built for you!
+1.  Go to your repository on GitHub.
+2.  Click the **"Actions"** tab at the top.
+3.  Click on the latest run.
+4.  At the bottom, under **"Artifacts"**, you can download the compiled Windows `.exe`.
+
 ---
 
 ## 🚀 Deployment (Docker / Dockge)
