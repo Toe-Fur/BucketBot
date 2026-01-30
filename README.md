@@ -9,7 +9,7 @@
 
 # LoweSync: Schedule Synchronization Service
 
-A robust, enterprise-grade synchronization service designed to securely bridge Lowe's Kronos schedules with Google Calendar. This service features intelligent diffing logic, session-hardened authentication, and native Docker support for reliable long-term operation.
+A robust, enterprise-grade synchronization service designed to securely bridge Lowe's UKG schedules with Google Calendar. This service features intelligent diffing logic, session-hardened authentication, and native Docker support for reliable long-term operation.
 
 ## Key Features (v3.4.7)
 
