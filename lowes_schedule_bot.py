@@ -24,11 +24,19 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.6"
+VERSION = "v3.4.7"
 # --------------------------
 # Config / Env
 # --------------------------
-TZ = os.getenv("TZ", "America/New_York") # Default to NY if no TZ is set
+TZ_ENV = os.getenv("TZ", "America/New_York")
+try:
+    # Validate TZ early
+    arrow.now(TZ_ENV)
+    TZ = TZ_ENV
+except:
+    print(f"⚠️  INVALID TIMEZONE detected: '{TZ_ENV}'. Defaulting to 'America/Los_Angeles' for safety.")
+    TZ = "America/Los_Angeles"
+
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 # DISCORD_WEBHOOK_URL will be loaded from config or env
 
@@ -467,7 +475,8 @@ def parse_fullcalendar_period(view_html):
                 dt = datetime.strptime(f"{date_iso} {time_str}", fmt)
                 # Localize to User's TZ immediately
                 return arrow.get(dt, TZ)
-            except:
+            except Exception as e:
+                # dprint(f"parse_dt fallback: {e}")
                 continue
         return None
 
