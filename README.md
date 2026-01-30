@@ -11,10 +11,11 @@
 
 A robust, enterprise-grade synchronization service designed to securely bridge Lowe's Kronos schedules with Google Calendar. This service features intelligent diffing logic, session-hardened authentication, and native Docker support for reliable long-term operation.
 
-## Key Features (v3.3.0)
+## Key Features (v3.4.0)
 
 *   **Intelligent Synchronization**: Advanced diffing mechanism ensures only schedule changes are propagated to the calendar, minimizing API overhead.
 *   **Hardened Configuration**: Protection against accidental credential overwrites in headless environments.
+*   **Automated Log Retention**: Screenshots, HTML snapshots, and ICS files are automatically purged after a configurable period (default 7 days).
 *   **Professional Deployment**: Automated GitHub Releases providing pre-built Windows binaries and optimized Docker images.
 *   **Timezone Resilience**: Native support for the `TZ` environment variable ensures temporal accuracy across global regions.
 
@@ -79,6 +80,7 @@ services:
       - LOWES_PIN=1111 
       - RUN_MODE=daily        # Options: "once", "daily", "interval"
       - RUN_VALUE=08:00       # 24h Time or Hourly Interval
+      - LOG_RETENTION_DAYS=7  # Automatically purge artifacts after X days
       - TZ=America/New_York
     stdin_open: true
     tty: true

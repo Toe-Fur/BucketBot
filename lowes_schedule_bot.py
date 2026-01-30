@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.3.0"
+VERSION = "v3.4.0"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -45,12 +45,14 @@ ARGS = parse_args()
 DEBUG = ARGS.debug
 
 CONFIG_DIR = "data"
+LOGS_DIR = os.path.join(CONFIG_DIR, "logs")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 def load_config():
-    # Ensure data dir exists
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)
+    # Ensure data and logs dir exist
+    for d in [CONFIG_DIR, LOGS_DIR]:
+        if not os.path.exists(d):
+            os.makedirs(d)
     
     config = {}
     if os.path.exists(CONFIG_FILE):
@@ -76,6 +78,7 @@ def load_config():
     password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
     pin      = get_val("LOWES_PIN", "Enter 4-digit PIN")
     webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook (optional)", default="")
+    retention_days = int(get_val("LOG_RETENTION_DAYS", "Enter Log Retention Days", default="7"))
     
     # Schedule Configuration
     run_mode = os.getenv("RUN_MODE") or config.get("RUN_MODE", "once")
@@ -95,13 +98,14 @@ def load_config():
                     "LOWES_PASSWORD": password,
                     "LOWES_PIN": pin,
                     "LOWES_DISCORD_WEBHOOK": webhook,
+                    "LOG_RETENTION_DAYS": retention_days,
                     "RUN_MODE": run_mode,
                     "RUN_VALUE": run_value
                 }, f, indent=2)
         except: pass
 
 
-    return username, password, pin, webhook, run_mode, run_value
+    return username, password, pin, webhook, retention_days, run_mode, run_value
 
 if ARGS.reset:
     print("🔄 Resetting configuration...")
@@ -116,7 +120,7 @@ if ARGS.reset:
     print("✅ Reset complete. Please re-run to setup.")
     sys.exit(0)
 
-USERNAME, PASSWORD, PIN, DISCORD_WEBHOOK_URL, RUN_MODE, RUN_VALUE = load_config()
+USERNAME, PASSWORD, PIN, DISCORD_WEBHOOK_URL, LOG_RETENTION_DAYS, RUN_MODE, RUN_VALUE = load_config()
 
 # Tesseract path: inside Docker it will be just 'tesseract' usually, or configure via env
 TESSERACT_PATH = os.getenv("TESSERACT_PATH", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
@@ -208,8 +212,8 @@ def debug_dump(tag):
 def save_view(tag_prefix="my_schedule"):
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     html = driver.page_source
-    html_path = os.path.join(CONFIG_DIR, f"{tag_prefix}_raw_{ts}.html")
-    png_path  = os.path.join(CONFIG_DIR, f"{tag_prefix}_{ts}.png")
+    html_path = os.path.join(LOGS_DIR, f"{tag_prefix}_raw_{ts}.html")
+    png_path  = os.path.join(LOGS_DIR, f"{tag_prefix}_{ts}.png")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     driver.save_screenshot(png_path)
@@ -258,7 +262,7 @@ def diagnostic_calendar_snapshot(tag="diag"):
                 cal = None
         if cal:
             snippet = cal.get_attribute("outerHTML")
-            fname = os.path.join(CONFIG_DIR, f"snippet_{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+            fname = os.path.join(LOGS_DIR, f"snippet_{tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
             with open(fname, "w", encoding="utf-8") as f:
                 f.write(snippet)
             print(f"💾 Saved {fname} ({len(snippet)} bytes)")
@@ -266,6 +270,28 @@ def diagnostic_calendar_snapshot(tag="diag"):
             print("⚠️ No calendar container candidate found for snippet.")
     except Exception as e:
         print("⚠️ diagnostic snippet save failed:", e)
+
+def cleanup_old_artifacts():
+    """Removes files in LOGS_DIR older than LOG_RETENTION_DAYS."""
+    if LOG_RETENTION_DAYS < 0:
+        return
+    
+    print(f"🧹 Running log cleanup (Retention: {LOG_RETENTION_DAYS} days)...")
+    now = time.time()
+    cutoff = now - (LOG_RETENTION_DAYS * 86400)
+    
+    count = 0
+    try:
+        for filename in os.listdir(LOGS_DIR):
+            file_path = os.path.join(LOGS_DIR, filename)
+            if os.path.isfile(file_path):
+                if os.path.getmtime(file_path) < cutoff:
+                    os.remove(file_path)
+                    count += 1
+        if count > 0:
+            print(f"   Done. Removed {count} old artifact(s).")
+    except Exception as e:
+        print(f"⚠️ Cleanup failed: {e}")
 
 # --------------------------
 # Login → MyLowesLife → UKG (keeps your original flow)
@@ -925,6 +951,9 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
 def main_task():
     print(f"\n--- Synchronization Process Initiated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
     
+    # Automated cleanup
+    cleanup_old_artifacts()
+
     # Ensure logged in
     try:
         login_to_portal()
@@ -960,7 +989,7 @@ def main_task():
 
     print(f"✅ Parsed {len(all_events)} shift(s).")
 
-    ics_name = os.path.join(CONFIG_DIR, f"schedule_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.ics")
+    ics_name = os.path.join(LOGS_DIR, f"schedule_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.ics")
     with open(ics_name, "w", encoding="utf-8") as f:
         f.write(str(calendar))
     print(f"🗂️ Calendar saved as {ics_name}")
