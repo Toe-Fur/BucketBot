@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.8"
+VERSION = "v3.1.9"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -319,7 +319,7 @@ def login_to_portal():
     # 2. Enter Credentials
     try:
         print("   -> Entering Sales ID and Password...")
-        user_field = driver.find_element(By.ID, "idToken1")
+        user_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "idToken1")))
         pass_field = driver.find_element(By.ID, "idToken2")
         submit_btn = driver.find_element(By.ID, "loginButton_0")
         
@@ -328,20 +328,48 @@ def login_to_portal():
         pass_field.clear()
         pass_field.send_keys(PASSWORD)
         
-        WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "loginButton_0")))
-        submit_btn.click()
+        # Robust click: try JS, then Normal, with ENTER fallback
+        print("   -> Submitting credentials...")
+        try:
+            js_click(submit_btn)
+        except:
+            try: submit_btn.click()
+            except: pass_field.send_keys(Keys.ENTER)
         
         # 3. Wait for Transition to PIN Page
         print("   -> Authentication stage 1 submitted. Waiting for PIN prompt...")
-        WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "idToken2")))
+        
+        # Robust wait: check for PIN field (idToken1) OR Error Message
+        end_wait = time.time() + 30
+        while time.time() < end_wait:
+            # Check for error message
+            src = driver.page_source.lower()
+            if "invalid login" in src or "authentication failed" in src or "incorrect" in src:
+                debug_dump("login_error_message")
+                raise Exception("Lowe's reported an invalid login/password. Please check your credentials.")
+            
+            # Check if we moved to PIN stage (idToken2 is gone AND idToken1 is present)
+            try:
+                # In PIN stage, idToken2 (password) is removed from DOM or hidden
+                if len(driver.find_elements(By.ID, "idToken2")) == 0:
+                    if len(driver.find_elements(By.ID, "idToken1")) > 0:
+                        break # Success
+            except: pass
+            time.sleep(1)
+        else:
+            raise Exception("Timed out waiting for PIN prompt after login submission.")
         
         # 4. Enter PIN
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
         print("   -> Entering Security PIN...")
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
         pin_field = driver.find_element(By.ID, "idToken1")
+        pin_field.clear()
         pin_field.send_keys(PIN)
         
-        driver.find_element(By.ID, "loginButton_0").click()
+        # PIN Submission
+        pin_btn = driver.find_element(By.ID, "loginButton_0")
+        try: js_click(pin_btn)
+        except: pin_btn.click()
         
         # Short settle to ensure redirect starts
         time.sleep(2)
