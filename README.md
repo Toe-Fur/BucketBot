@@ -2,10 +2,10 @@
 
 A professional, Dockerized synchronization service that securely scrapes your Lowe's schedule (Kronos) and maintains an up-to-date calendar in Google Calendar with smart diffing logic.
 
-## Key Enhancements (v3.1.0)
+## Key Enhancements (v3.3.0)
 - **Smart Synchronization**: Intelligent diffing mechanism only updates what has changed, reducing API calls and noise.
-- **Session Persistence**: Authentication is handled per-task, ensuring the service remains logged in during long-term operation.
-- **Professional Logging**: Formalized system output for clear monitoring and audits.
+- **Hardened Configuration**: Protection against accidental credential overwrites in Docker/Dockge.
+- **Professional Releases**: Automated GitHub Releases with compiled Windows binaries.
 - **Dynamic Timezone Support**: Respects system `TZ` environment variables for accurate local time reporting.
 
 ---
@@ -38,12 +38,11 @@ If you want to run the bot as a normal `.exe` file without Docker:
     ```
 3.  **Find your Build**: The finished file will be in the `dist/` folder.
 
-### 📦 Option 3: GitHub Actions (Automated)
-Every time you push code to GitHub, the service is automatically built for you!
-1.  Go to your repository on GitHub.
-2.  Click the **"Actions"** tab at the top.
-3.  Click on the latest run.
-4.  At the bottom, under **"Artifacts"**, you can download the compiled Windows `.exe`.
+### 📦 Option 3: Official GitHub Releases (Easiest for Windows)
+For a polished, professional experience:
+1.  Navigate to the **"Releases"** section on the right-hand side of this GitHub repository.
+2.  Download the latest version's **LoweSyncService.exe**.
+3.  Run the `.exe` directly on your Windows machine.
 
 ---
 

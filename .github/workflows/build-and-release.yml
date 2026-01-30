@@ -3,6 +3,7 @@ name: Build and Release
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -33,6 +34,23 @@ jobs:
       with:
         name: LoweSyncService-Windows
         path: dist/*.exe
+
+  release:
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LoweSyncService-Windows
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "*.exe"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-docker:
     runs-on: ubuntu-latest
