@@ -11,11 +11,11 @@
 
 A robust, enterprise-grade synchronization service designed to securely bridge Lowe's Kronos schedules with Google Calendar. This service features intelligent diffing logic, session-hardened authentication, and native Docker support for reliable long-term operation.
 
-## Key Features (v3.4.5)
+## Key Features (v3.4.7)
 
 *   **Intelligent Synchronization**: Advanced diffing mechanism ensures only schedule changes are propagated to the calendar.
+*   **Robust TZ Validation**: Automatic correction and warnings for timezone typos to prevent silent scraping failures.
 *   **Fail-Safe Parsing**: A brute-force fallback engine that captures shifts even when standard page elements load slowly or unclearly.
-*   **Timezone Alignment Diagnostic**: Automatic detection of potential timezone mismatches between service configuration and store location.
 *   **Deep Crawl**: An optimized 3-page search strategy (Current + 2 months) that combines Grid and Aside views for comprehensive coverage.
 *   **Safe Start**: Prevent blocking on optional configuration fields in Docker/non-interactive environments.
 *   **Automated Log Retention**: Screenshots, HTML snapshots, and ICS files are automatically purged after a configurable period (default 7 days).
