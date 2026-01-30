@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.0"
+VERSION = "v3.1.5"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -61,69 +61,70 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
 
-    # Helper to get value from config, env, or prompt
-    def get_val(key, prompt_text, default=None, hidden=False):
-        val = config.get(key) or os.getenv(key) or default
-        if not val:
+    # Helper: Environment takes priority over saved config.
+    def get_val(key, prompt_text, default=None):
+        # 1. Check Environment
+        val = os.getenv(key)
+        if val:
+            # If provided via Env, we don't save to config.json (keep secrets out of files if possible)
+            return val.strip()
+        
+        # 2. Check Saved Config
+        val = config.get(key)
+        if val:
+            return val.strip()
+
+        # 3. Prompt if interactive
+        if sys.stdin.isatty():
             print(f"📝 Setup Required: {prompt_text}")
             val = input(f"{prompt_text}: ").strip()
-            config[key] = val
-        return val
+            if val:
+                config[key] = val
+                return val
+        
+        return default
 
     username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID")
     password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
-    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN (e.g. 1234)")
-    webhook  = config.get("LOWES_DISCORD_WEBHOOK") or os.getenv("LOWES_DISCORD_WEBHOOK", "")
+    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN")
+    webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook URL (optional)", default="")
     
-    # Schedule Config
-    run_mode = config.get("RUN_MODE") or os.getenv("RUN_MODE") or "once"
-    run_value = config.get("RUN_VALUE") or os.getenv("RUN_VALUE") or ""
+    # Schedule Logic: Environment ALWAYS wins
+    run_mode = os.getenv("RUN_MODE")
+    run_value = os.getenv("RUN_VALUE")
 
-    # If running interactively AND not configured via Env, prompt for schedule mode.
-    # checking os.getenv("RUN_MODE") ensures that Dockge/Compose setups with Env vars skip this prompt.
+    if not run_mode:
+        run_mode = config.get("RUN_MODE", "once")
+        run_value = config.get("RUN_VALUE", "")
+
+    # Interactive prompt only if nothing is set in Env AND we are in a terminal
     if sys.stdin.isatty() and not os.getenv("RUN_MODE"):
-        print(f"\n🕒 Scheduling Setup (Current: {run_mode} {run_value})")
-        print("1. Run Once (and exit)")
-        print("2. Run Daily (e.g. at 08:00)")
-        print("3. Run Interval (e.g. every 4 hours)")
-        
-        # Default to current
-        def_choice = "1"
-        if run_mode == "daily": def_choice = "2"
-        elif run_mode == "interval": def_choice = "3"
-
-        choice = input(f"Select Mode [{def_choice}]: ").strip() or def_choice
+        print(f"\n🕒 Current Schedule: {run_mode} {run_value}")
+        print("Selection: [1] Once, [2] Daily, [3] Interval")
+        choice = input(f"Choose [default={run_mode}]: ").strip()
         
         if choice == "2":
             run_mode = "daily"
-            curr_val = run_value if run_mode == "daily" else "08:00"
-            run_value = input(f"Enter time (HH:MM 24h) [{curr_val}]: ").strip() or curr_val
+            run_value = input("Time (HH:MM 24h) [default=08:00]: ").strip() or "08:00"
         elif choice == "3":
             run_mode = "interval"
-            curr_val = run_value if run_mode == "interval" else "4"
-            run_value = input(f"Enter hours interval [{curr_val}]: ").strip() or curr_val
-        else:
+            run_value = input("Hours interval [default=4]: ").strip() or "4"
+        elif choice == "1":
             run_mode = "once"
             run_value = ""
-        
+
+    # Enforce safe defaults for specific modes
+    if run_mode == "daily" and not run_value: run_value = "08:00"
+    if run_mode == "interval" and not run_value: run_value = "4"
+
+    # Save setup inputs to config.json for next time (non-env vars only)
+    if config:
         config["RUN_MODE"] = run_mode
         config["RUN_VALUE"] = run_value
-    else:
-        print(f"🤖 Non-interactive mode detected. Using saved schedule: {run_mode} {run_value}")
-
-    # Save back to config (always, to ensure new selection persists or defaults are saved)
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({
-                "LOWES_USERNAME": username,
-                "LOWES_PASSWORD": password,
-                "LOWES_PIN": pin,
-                "LOWES_DISCORD_WEBHOOK": webhook,
-                "RUN_MODE": run_mode,
-                "RUN_VALUE": run_value
-            }, f, indent=2)
-    except Exception as e:
-        print(f"⚠️ Failed to save config: {e}")
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=2)
+        except: pass
 
     return username, password, pin, webhook, run_mode, run_value
 
