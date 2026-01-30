@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.6"
+VERSION = "v3.1.7"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -293,27 +293,34 @@ def diagnostic_calendar_snapshot(tag="diag"):
 # Login → MyLowesLife → UKG (keeps your original flow)
 # --------------------------
 def login_to_portal():
-    print("🔑 Logging into Lowe's Portal...")
+    print("🔑 Authenticating with Lowe's Portal...")
     driver.get("https://www.myloweslife.com")
     try:
-        WebDriverWait(driver, T.med).until(EC.presence_of_element_located((By.ID, "idToken2")))
+        # Increase timeout to 15s for the initial heavy portal load in Docker
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
     except Exception:
-        # If we are already logged in (unlikely in headless but good to check)
+        # Diagnostic dump on failure
+        debug_dump("login_initial_timeout")
         if "Home" in driver.title or "MyLowesLife" in driver.page_source:
-             print("✅ Already logged in.")
+             print("✅ Already authenticated.")
              return True
+        print("❌ Portal load timeout: Password field not detected.")
         raise
 
-    driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
-    driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
-    driver.find_element(By.ID, "loginButton_0").click()
-    
-    WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
-    WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
-    driver.find_element(By.ID, "idToken1").send_keys(PIN)
-    driver.find_element(By.ID, "loginButton_0").click()
-    print("✅ Login successful.")
-    return True
+    try:
+        driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
+        driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
+        driver.find_element(By.ID, "loginButton_0").click()
+        
+        WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        driver.find_element(By.ID, "idToken1").send_keys(PIN)
+        driver.find_element(By.ID, "loginButton_0").click()
+        print("✅ Portal authentication successful.")
+        return True
+    except Exception as e:
+        debug_dump("login_entry_failed")
+        raise Exception(f"Failed during credential entry: {str(e)}")
 
 # Utility to open the UKG tile if needed (kept for fallback)
 def open_ukg_tile():
@@ -995,11 +1002,14 @@ if __name__ == "__main__":
                 driver.quit()
                 sys.exit(1)
         
-        print("System initialized and monitoring...")
+        print("System monitoring active. Waiting for scheduled tasks...")
         try:
             while True:
                 schedule.run_pending()
-                time.sleep(60)
-        except KeyboardInterrupt:
-            print("🛑 Stopping scheduler.")
+                time.sleep(30)
+        except Exception as e:
+            print(f"❌ Scheduler loop error: {e}")
+            traceback.print_exc()
+        finally:
+            print("🔻 Service is shutting down.")
             driver.quit()
