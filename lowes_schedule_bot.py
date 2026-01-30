@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.1.11"
+VERSION = "v3.2.0"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -61,70 +61,38 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
 
-    # Helper: Environment takes priority over saved config.
-    def get_val(key, prompt_text, default=None):
-        # 1. Check Environment
-        val = os.getenv(key)
-        if val:
-            # If provided via Env, we don't save to config.json (keep secrets out of files if possible)
-            return val.strip()
-        
-        # 2. Check Saved Config
-        val = config.get(key)
-        if val:
-            return val.strip()
+    # Helper: Check Environment first, then config file.
+    def get_val(key, default=None):
+        val = os.getenv(key) or config.get(key)
+        # In Docker or non-TTY, we never prompt.
+        return (val or default)
 
-        # 3. Prompt if strictly required (no default) and interactive
-        if default is None and sys.stdin.isatty():
-            print(f"📝 Setup Required: {prompt_text}")
-            val = input(f"{prompt_text}: ").strip()
-            if val:
-                config[key] = val
-                return val
-        
-        return default
-
-    username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID")
-    password = get_val("LOWES_PASSWORD", "Enter Lowe's Password")
-    pin      = get_val("LOWES_PIN", "Enter 4-digit PIN")
-    webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook URL (optional)", default="")
+    username = get_val("LOWES_USERNAME")
+    password = get_val("LOWES_PASSWORD")
+    pin      = get_val("LOWES_PIN")
+    webhook  = get_val("LOWES_DISCORD_WEBHOOK", "")
     
-    # Schedule Logic: Environment ALWAYS wins
-    run_mode = os.getenv("RUN_MODE")
-    run_value = os.getenv("RUN_VALUE")
+    # Schedule Configuration
+    run_mode = os.getenv("RUN_MODE") or config.get("RUN_MODE", "once")
+    run_value = os.getenv("RUN_VALUE") or config.get("RUN_VALUE", "")
 
-    if not run_mode:
-        run_mode = config.get("RUN_MODE", "once")
-        run_value = config.get("RUN_VALUE", "")
-
-    # Interactive prompt only if nothing is set in Env AND we are in a terminal
-    if sys.stdin.isatty() and not os.getenv("RUN_MODE"):
-        print(f"\n🕒 Current Schedule: {run_mode} {run_value}")
-        print("Selection: [1] Once, [2] Daily, [3] Interval")
-        choice = input(f"Choose [default={run_mode}]: ").strip()
-        
-        if choice == "2":
-            run_mode = "daily"
-            run_value = input("Time (HH:MM 24h) [default=08:00]: ").strip() or "08:00"
-        elif choice == "3":
-            run_mode = "interval"
-            run_value = input("Hours interval [default=4]: ").strip() or "4"
-        elif choice == "1":
-            run_mode = "once"
-            run_value = ""
-
-    # Enforce safe defaults for specific modes
+    # Safety defaults
     if run_mode == "daily" and not run_value: run_value = "08:00"
     if run_mode == "interval" and not run_value: run_value = "4"
 
-    # Save setup inputs to config.json for next time (non-env vars only)
-    if config:
-        config["RUN_MODE"] = run_mode
-        config["RUN_VALUE"] = run_value
-        try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f, indent=2)
-        except: pass
+    # Persist back to config.json if needed
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump({
+                "LOWES_USERNAME": username,
+                "LOWES_PASSWORD": password,
+                "LOWES_PIN": pin,
+                "LOWES_DISCORD_WEBHOOK": webhook,
+                "RUN_MODE": run_mode,
+                "RUN_VALUE": run_value
+            }, f, indent=2)
+    except:
+        pass
 
     return username, password, pin, webhook, run_mode, run_value
 
@@ -299,31 +267,29 @@ def login_to_portal():
     print("🔑 Logging into Lowe's Portal...")
     driver.get("https://www.myloweslife.com")
     try:
-        # Initial wait for the portal password field
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken2")))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken2")))
     except Exception:
-        # If we are already logged in (check title or source)
+        # Check if already authenticated
         if "Home" in driver.title or "MyLowesLife" in driver.page_source:
-             print("✅ Already authenticated.")
+             print("✅ System: Session authenticated.")
              return True
-        debug_dump("login_initial_timeout")
-        raise Exception("Portal load timeout: Password field not detected.")
+        debug_dump("login_timeout")
+        raise Exception("Timed out waiting for login page.")
 
     try:
-        # Stage 1: ID and Password
+        # Enter Credentials
         driver.find_element(By.ID, "idToken1").send_keys(USERNAME)
         driver.find_element(By.ID, "idToken2").send_keys(PASSWORD)
         driver.find_element(By.ID, "loginButton_0").click()
         
-        # Wait for ID/Pass to vanish and PIN prompt to appear
-        WebDriverWait(driver, 30).until(EC.invisibility_of_element_located((By.ID, "idToken2")))
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "idToken1")))
+        # PIN Transition
+        WebDriverWait(driver, 30).until(EC.invisibility_of_element((By.ID, "idToken2")))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "idToken1")))
         
-        # Stage 2: Security PIN
+        # Enter PIN
         driver.find_element(By.ID, "idToken1").send_keys(PIN)
         driver.find_element(By.ID, "loginButton_0").click()
         
-        # Verification settle
         time.sleep(3)
         print("✅ Login successful.")
         return True
