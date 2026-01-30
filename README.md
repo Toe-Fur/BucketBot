@@ -24,6 +24,31 @@ A robust, enterprise-grade synchronization service designed to securely bridge L
 
 ---
 
+## 🔑 Google Calendar API Setup
+
+Initial setup requires a "Desktop App" credential from the Google Cloud Console.
+
+1.  **Create Project**: Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (e.g., "LoweSync").
+2.  **Enable API**: 
+    - Navigate to **APIs & Services** > **Library**.
+    - Search for **"Google Calendar API"** and click **Enable**.
+3.  **Configure OAuth Consent Screen**:
+    - Go to **APIs & Services** > **OAuth consent screen**.
+    - Choose **User Type: External** and click **Create**.
+    - Fill in the required App Name and Email. 
+    - **Important**: Add your own Gmail address as a **Test User** in the "Test users" section.
+4.  **Create Credentials**:
+    - Go to **APIs & Services** > **Credentials**.
+    - Click **+ Create Credentials** > **OAuth client ID**.
+    - Select **Application type: Desktop app**.
+    - Name it "LoweSync Bot" and click **Create**.
+5.  **Download Key**:
+    - Locate your new OAuth Client ID in the list.
+    - Click the **Download JSON** icon (⬇️) on the far right.
+    - Rename the downloaded file to `credentials.json` and place it in the project root.
+
+---
+
 ## 🚀 Execution and Deployment
 
 ### Option 1: Docker (Industry Standard)
