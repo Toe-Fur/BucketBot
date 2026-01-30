@@ -18,11 +18,11 @@ This is the standard way to run the service. Building the "stack" ensures all de
 1.  **Open a Terminal** (PowerShell or CMD) in the project directory.
 2.  **Run the Build Command**:
     ```powershell
-    docker-compose build
+    docker compose build
     ```
 3.  **Start the Service**:
     ```powershell
-    docker-compose up -d
+    docker compose up -d
     ```
 
 ### 📦 Option 2: Standalone Executable (Windows)
@@ -89,7 +89,7 @@ Click **"Deploy"** in Dockge. The service will build, initialize its headless en
 
 ### Monitor Logs
 ```powershell
-docker-compose logs -f bucket-bot
+docker compose logs -f bucket-bot
 ```
 
 ### Force an Immediate Synchronization
@@ -99,5 +99,5 @@ docker exec bucket-bot python lowes_schedule_bot.py --once
 
 ### Reset System State
 ```powershell
-docker-compose run --rm bucket-bot --reset
+docker compose run --rm bucket-bot --reset
 ```
