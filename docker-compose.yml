@@ -6,5 +6,13 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
+    environment:
+      - LOWES_USERNAME=YourSalesID
+      - LOWES_PASSWORD=YourPassword
+      - LOWES_PIN=1234
+      - RUN_MODE=daily
+      - RUN_VALUE=08:00
+      - TZ=America/New_York
+      # - LOWES_DISCORD_WEBHOOK=your_webhook_url
     stdin_open: true
     tty: true

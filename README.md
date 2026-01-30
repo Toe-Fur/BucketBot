@@ -47,28 +47,43 @@ Every time you push code to GitHub, the service is automatically built for you!
 
 ---
 
-## 🚀 Deployment (Docker / Dockge)
+## 🐳 Deployment on Linux (Dockge)
 
-The most reliable way to set up the service on a remote server is using the provided `docker-compose.yml`.
+The "Lowe's Schedule Synchronization Service" is purpose-built for headless Linux servers running **Dockge**.
 
-1.  **Initialize locally**: Run the service once to generate your `data/token.json`.
-2.  **Deploy**:
-    ```yaml
-    services:
-      bucket-bot:
-        build: .
-        container_name: bucket-bot
-        restart: unless-stopped
-        volumes:
-          - ./data:/app/data
-        environment:
-          - LOWES_USERNAME=YourSalesID
-          - LOWES_PASSWORD=YourPassword
-          - LOWES_PIN=1234
-          - RUN_MODE=daily
-          - RUN_VALUE=08:00
-          - TZ=America/New_York
-    ```
+### 1. Transfer Credentials
+Since the initial Google authorization requires a browser, it is easiest to generate your `token.json` on your Windows PC first and then move it to the server.
+
+1.  Run the bot locally once to successful login.
+2.  Copy the contents of your local `data/` folder (specifically `token.json` and `credentials.json`).
+3.  In your Linux server's project directory (usually `/opt/stacks/bucket-bot/data`), create those same files.
+
+### 2. Dockge Stack Configuration
+Paste the following into your Dockge editor:
+
+```yaml
+services:
+  bucket-bot:
+    build: .
+    container_name: bucket-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LOWES_USERNAME=1234567  # Your Lowe's Sales ID
+      - LOWES_PASSWORD=Password # Your Lowe's Password
+      - LOWES_PIN=1111        # Your 4-Digit PIN
+      - RUN_MODE=daily        # "once", "daily", or "interval"
+      - RUN_VALUE=08:00       # Time (24h) or Hours Interval
+      - TZ=America/New_York   # Set your local timezone
+    stdin_open: true
+    tty: true
+```
+
+### 3. Deploy
+Click **"Deploy"** in Dockge. The service will build, initialize its headless environment, and begin the synchronization schedule.
+
+---
 
 ## 🛠️ Maintenance Commands
 
