@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.5.0"
+VERSION = "v3.5.1"
 # --------------------------
 # Config / Env
 # --------------------------
@@ -425,7 +425,8 @@ except Exception:
 # --------------------------
 # Helpers
 # --------------------------
-TIME_RANGE_RX = re.compile(r"(\d{1,2}:\d{2}\s*(?:am|pm))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:am|pm))", re.IGNORECASE)
+# Relaxed Regex: Handles missing start meridians, varying dashes, and case-insensitivity
+TIME_RANGE_RX = re.compile(r"(\d{1,2}:\d{2}\s*(?:am|pm)?)\s*[-–—]\s*(\d{1,2}:\d{2}\s*(?:am|pm))", re.IGNORECASE)
 
 def click_next_and_wait_change():
     def grab_label():
@@ -792,7 +793,13 @@ def run_scrape_cycle():
         if i < 3: # don't click next on the last allowed page
             if click_next_and_wait_change():
                 dprint(f"Successfully navigated to page {i+1}")
-                time.sleep(1.0) # wait for render
+                # Increased settling wait for v3.5.1
+                time.sleep(3.0) 
+                # Explicit wait for at least one data-date or fc-event to appear
+                try:
+                    WebDriverWait(driver, 5).until(lambda d: d.find_elements(By.CSS_SELECTOR, "td[data-date], .fc-event"))
+                except:
+                    pass
             else:
                 dprint(f"Pagination stop: Next button not found or view did not change at page {i}.")
                 break
@@ -958,12 +965,22 @@ def sync_to_google_calendar(cal, calendar_id="primary"):
         e_utc = ev.end.to('UTC').format("YYYY-MM-DDTHH:mm:ss")
         p_map[(s_utc, e_utc)] = ev
 
+    deleted_count = 0
+    panic_limit = 5
+    
+    # 3. Delete stale shifts (only if we didn't scrape 0 shifts unexpectedly)
     deleted_dates = set()
     for (s, en), eid in g_map.items():
         if (s, en) not in p_map:
+            # Panic Switch: If we are deleting many shifts, and found is empty, abort.
+            if deleted_count >= panic_limit:
+                print(f"⚠️ Panic Guard: Avoided deleting more than {panic_limit} shifts in one run to protect history.")
+                break
+                
             try:
                 service.events().delete(calendarId=calendar_id, eventId=eid).execute()
                 deleted_dates.add(s[:10])
+                deleted_count += 1
                 print(f"🗑️ Deleted stale shift on {s[:10]} {s[11:]}")
             except Exception as e:
                 print(f"❌ Failed to delete: {e}")
