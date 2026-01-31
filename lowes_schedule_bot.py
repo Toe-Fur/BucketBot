@@ -24,19 +24,11 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 import pytesseract, time, requests, os, re, sys, traceback, json, arrow, argparse, schedule
 
-VERSION = "v3.4.9"
+VERSION = "v3.5.0"
 # --------------------------
 # Config / Env
 # --------------------------
-TZ_ENV = os.getenv("TZ", "America/New_York")
-try:
-    # Validate TZ early
-    arrow.now(TZ_ENV)
-    TZ = TZ_ENV
-except:
-    print(f"⚠️  INVALID TIMEZONE detected: '{TZ_ENV}'. Defaulting to 'America/Los_Angeles' for safety.")
-    TZ = "America/Los_Angeles"
-
+TZ = "America/New_York" # Placeholder until config loads
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 # DISCORD_WEBHOOK_URL will be loaded from config or env
 
@@ -71,23 +63,41 @@ def load_config():
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
 
-    # Helper: Environment wins, then saved config, then prompt if interactive & required
+    # Helper: Environment wins, then saved config, then prompt if required
     def get_val(key, prompt_text, default=None, required=False):
         val = os.getenv(key) or config.get(key)
         
-        # Only prompt if missing, interactive, and either no default or explicitly required
-        if not val and sys.stdin.isatty() and (default is None or required):
-            print(f"📝 Setup Required: {prompt_text}")
-            val = input(f"{prompt_text}: ").strip()
-            if val: config[key] = val
+        # If missing and we aren't explicitly in a non-interactive mode, try to prompt
+        if not val and (default is None or required):
+            # Check if we can actually take input (ignore isatty on Windows as it's flaky in EXEs)
+            try:
+                print(f"📝 Setup Required: {prompt_text}")
+                val = input(f"{prompt_text}: ").strip()
+                if val: config[key] = val
+            except (EOFError, KeyboardInterrupt):
+                # Only fail if it's strictly required and has no default
+                if required and default is None:
+                    print(f"❌ Error: {key} is required but could not prompt for input.")
+                    sys.exit(1)
             
         return val or default
 
     username = get_val("LOWES_USERNAME", "Enter Lowe's Sales ID", required=True)
     password = get_val("LOWES_PASSWORD", "Enter Lowe's Password", required=True)
     pin      = get_val("LOWES_PIN", "Enter 4-digit PIN", required=True)
+    tz_val   = get_val("TZ", "Enter Timezone (e.g. America/New_York or America/Los_Angeles)", default="America/New_York")
     webhook  = get_val("LOWES_DISCORD_WEBHOOK", "Enter Discord Webhook (optional)", default="")
     retention_days = int(get_val("LOG_RETENTION_DAYS", "Enter Log Retention Days", default="7"))
+
+    # Post-load validation for TZ
+    global TZ
+    try:
+        arrow.now(tz_val)
+        TZ = tz_val
+    except:
+        print(f"⚠️  INVALID TIMEZONE: '{tz_val}'. Defaulting to 'America/Los_Angeles'.")
+        TZ = "America/Los_Angeles"
+        config["TZ"] = TZ
     
     # Schedule Configuration
     run_mode = os.getenv("RUN_MODE") or config.get("RUN_MODE", "once")
@@ -106,6 +116,7 @@ def load_config():
                     "LOWES_USERNAME": username,
                     "LOWES_PASSWORD": password,
                     "LOWES_PIN": pin,
+                    "TZ": TZ,
                     "LOWES_DISCORD_WEBHOOK": webhook,
                     "LOG_RETENTION_DAYS": retention_days,
                     "RUN_MODE": run_mode,
