@@ -1,7 +1,6 @@
 services:
   bucket-bot:
-    build:
-      context: https://github.com/Toe-Fur/BucketBot.git
+    build: .
     container_name: bucket-bot
     restart: unless-stopped
     volumes:
