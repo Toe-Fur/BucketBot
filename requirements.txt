@@ -1,6 +1,4 @@
 selenium
-pytesseract
-Pillow
 ics
 google-api-python-client
 google-auth-httplib2
@@ -9,4 +7,3 @@ beautifulsoup4
 requests
 arrow
 schedule
-argparse
