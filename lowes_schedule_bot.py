@@ -58,12 +58,22 @@ LOCK_FILE   = os.path.join(CONFIG_DIR, "lowes_bot.lock")
 # --------------------------
 # Single-instance guard
 # --------------------------
+def _is_docker():
+    return os.path.exists("/.dockerenv")
+
 def acquire_instance_lock():
     """
     Prevents multiple instances from running simultaneously.
     Uses a PID file; if the stored PID is no longer alive the lock is considered stale.
-    Returns True if this process acquired the lock, False if another instance is running.
+    In Docker, the PID lock is skipped — Docker itself guarantees single-instance
+    and PIDs are reused across container restarts which causes false positives.
     """
+    if _is_docker():
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        atexit.register(_release_lock)
+        return True
     if os.path.exists(LOCK_FILE):
         try:
             with open(LOCK_FILE) as f:
@@ -193,6 +203,11 @@ def create_driver():
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+    # In Docker (Debian), chromium is installed as /usr/bin/chromium, not chrome
+    for candidate in ("/usr/bin/chromium", "/usr/bin/chromium-browser"):
+        if os.path.exists(candidate):
+            opts.binary_location = candidate
+            break
     return webdriver.Chrome(options=opts)
 
 T = SimpleNamespace(short=1.0, med=4.0)
