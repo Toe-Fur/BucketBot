@@ -420,6 +420,24 @@ TIME_RANGE_RX = re.compile(
     re.IGNORECASE
 )
 
+# Pay codes and labels that mean the employee is NOT working.
+# When any of these appear in the text surrounding a time range, skip it.
+NON_WORK_RX = re.compile(
+    r"\b("
+    r"unpaid|jury(\s+duty)?|holiday|vacation|sick(\s+(day|leave))?|"
+    r"give\s*back|personal(\s+day)?|bereavement|leave(\s+of\s+absence)?|"
+    r"fmla|loa|floating|comp(\s+day)?|pto|time\s*off|"
+    r"christmas|thanksgiving|new\s*year|labor\s*day|memorial\s*day|"
+    r"independence\s*day|mlk|martin\s*luther|veterans\s*day|"
+    r"columbus\s*day|presidents\s*day|easter|good\s*friday"
+    r")\b",
+    re.IGNORECASE
+)
+
+def is_non_work(text):
+    """Return True if text contains a pay code indicating a day off."""
+    return bool(NON_WORK_RX.search(text or ""))
+
 def click_next_and_wait_change():
     def grab_label():
         try:
@@ -452,7 +470,10 @@ def parse_fullcalendar_period(view_html):
     events = []
     seen   = set()
 
-    def add_event_if_new(start_dt, end_dt, source_text=None):
+    def add_event_if_new(start_dt, end_dt, source_text=None, raw_text=""):
+        if is_non_work(raw_text):
+            dprint(f"   ⏭️  Skipped non-work entry ({source_text}): {raw_text[:80]!r}")
+            return
         start_dt = start_dt.replace(second=0, microsecond=0)
         end_dt   = end_dt.replace(second=0, microsecond=0)
         if end_dt <= start_dt:
@@ -544,6 +565,7 @@ def parse_fullcalendar_period(view_html):
                     date_iso = col_to_date.get(col_idx)
                     if not date_iso or isinstance(date_iso, dict):
                         continue
+                    cell_text  = td.get_text(" ", strip=True)
                     time_nodes = td.select("span.fc-time, .fc-time, div.time, span.time")
                     for sp in time_nodes:
                         m = TIME_RANGE_RX.search(sp.get_text(" ", strip=True) or "")
@@ -551,13 +573,13 @@ def parse_fullcalendar_period(view_html):
                             sdt = parse_dt(date_iso, m.group(1).lower())
                             edt = parse_dt(date_iso, m.group(2).lower())
                             if sdt and edt:
-                                add_event_if_new(sdt, edt, f"Grid table cell ({date_iso})")
+                                add_event_if_new(sdt, edt, f"Grid table cell ({date_iso})", raw_text=cell_text)
                     if not time_nodes:
-                        for m in TIME_RANGE_RX.finditer(td.get_text(" ", strip=True) or ""):
+                        for m in TIME_RANGE_RX.finditer(cell_text or ""):
                             sdt = parse_dt(date_iso, m.group(1).lower())
                             edt = parse_dt(date_iso, m.group(2).lower())
                             if sdt and edt:
-                                add_event_if_new(sdt, edt, f"Grid table fallback ({date_iso})")
+                                add_event_if_new(sdt, edt, f"Grid table fallback ({date_iso})", raw_text=cell_text)
             if events:
                 dprint("parse: used table-based strategy (DOM header map)")
                 return events
@@ -575,12 +597,13 @@ def parse_fullcalendar_period(view_html):
             if not date_iso:
                 continue
             for ev in day.select(".fc-event, .fc-daygrid-event, .fc-list-item, .event"):
-                m = TIME_RANGE_RX.search(ev.get_text(" ", strip=True) or "")
+                ev_text = ev.get_text(" ", strip=True)
+                m       = TIME_RANGE_RX.search(ev_text or "")
                 if m:
                     sdt = parse_dt(date_iso, m.group(1).lower())
                     edt = parse_dt(date_iso, m.group(2).lower())
                     if sdt and edt:
-                        add_event_if_new(sdt, edt, f"DayGrid div ({date_iso})")
+                        add_event_if_new(sdt, edt, f"DayGrid div ({date_iso})", raw_text=ev_text)
         if events:
             dprint("parse: used div-based daygrid strategy")
             return events
@@ -594,6 +617,7 @@ def parse_fullcalendar_period(view_html):
             if not m:
                 continue
             candidate_date = None
+            ancestor_text  = ""
             curr = node.parent
             for _ in range(10):
                 if not curr:
@@ -604,6 +628,7 @@ def parse_fullcalendar_period(view_html):
                     break
                 t = curr.get_text(" ", strip=True)
                 if len(t) < 200:
+                    ancestor_text = t
                     m_date = re.search(r"(\d{4}-\d{2}-\d{2})", t)
                     if m_date:
                         candidate_date = m_date.group(1)
@@ -613,7 +638,8 @@ def parse_fullcalendar_period(view_html):
                 sdt = parse_dt(candidate_date, m.group(1).lower())
                 edt = parse_dt(candidate_date, m.group(2).lower())
                 if sdt and edt:
-                    add_event_if_new(sdt, edt, f"Brute-force scan ({candidate_date})")
+                    add_event_if_new(sdt, edt, f"Brute-force scan ({candidate_date})",
+                                     raw_text=ancestor_text or str(node))
         if events:
             dprint("parse: used global brute-force scanner")
             return events
@@ -670,6 +696,9 @@ def scrape_shifts_from_aside(max_clicks=None):
                     edt = arrow.get(edt_naive, TZ)
                     if edt <= sdt:
                         edt = edt.shift(days=1)
+                    if is_non_work(panel_text):
+                        dprint(f"   ⏭️  Skipped non-work entry (aside {date_iso}): {panel_text[:80]!r}")
+                        break
                     found.append((sdt, edt, "Lowe's 🛠️"))
                     day_count += 1
                 except Exception:
