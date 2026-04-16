@@ -15,6 +15,7 @@ services:
       # - LOWES_DISCORD_WEBHOOK=your_webhook_url
     stdin_open: true
     tty: true
+    mem_limit: 1g
     healthcheck:
       test: ["CMD", "python", "-c", "import os, sys; sys.exit(0 if os.path.exists('/app/data/lowes_bot.lock') else 1)"]
       interval: 5m
