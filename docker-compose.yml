@@ -1,7 +1,7 @@
 services:
   bucket-bot:
-    # Use remote build context so you don't need to clone the files manually on the server
-    build: .
+    build:
+      context: https://github.com/Toe-Fur/BucketBot.git
     container_name: bucket-bot
     restart: unless-stopped
     volumes:
